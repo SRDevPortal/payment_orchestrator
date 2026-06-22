@@ -1,0 +1,9 @@
+[project]
+name = "razorpay_integration"
+version = "0.0.1"
+description = "Unified payment orchestration for ERPNext/Frappe"
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
