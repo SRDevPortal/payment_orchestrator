@@ -1,0 +1,14 @@
+include README.md
+include LICENSE
+include pyproject.toml
+
+recursive-include payment_orchestrator *.json
+recursive-include payment_orchestrator *.js
+recursive-include payment_orchestrator *.css
+recursive-include payment_orchestrator *.html
+recursive-include payment_orchestrator *.md
+recursive-include payment_orchestrator *.txt
+recursive-include payment_orchestrator *.py
+
+recursive-exclude payment_orchestrator __pycache__
+recursive-exclude payment_orchestrator *.py[co]

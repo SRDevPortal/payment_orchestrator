@@ -1,9 +1,0 @@
-[project]
-name = "payment_orchestrator"
-version = "0.0.1"
-description = "Multi-gateway payment links, POS collections, webhooks, and ERPNext allocation for Frappe"
-requires-python = ">=3.10"
-
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"

@@ -3,6 +3,16 @@ name = "payment_orchestrator"
 version = "0.0.1"
 description = "Multi-gateway payment links, POS collections, webhooks, and ERPNext allocation for Frappe"
 requires-python = ">=3.10"
+authors = [{ name = "OpenClaw" }]
+license = { file = "LICENSE" }
+
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["payment_orchestrator*"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
