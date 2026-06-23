@@ -1,7 +1,0 @@
-Metadata-Version: 2.4
-Name: razorpay_integration
-Version: 0.0.1
-Summary: Unified payment orchestration for ERPNext/Frappe
-Author: OpenClaw
-Requires-Python: >=3.10
-Dynamic: author

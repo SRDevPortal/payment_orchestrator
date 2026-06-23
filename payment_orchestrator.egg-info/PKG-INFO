@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: payment_orchestrator
+Version: 0.0.1
+Summary: Multi-gateway payment links, POS collections, webhooks, and ERPNext allocation for Frappe
+Author: OpenClaw
+Requires-Python: >=3.10
+Dynamic: author

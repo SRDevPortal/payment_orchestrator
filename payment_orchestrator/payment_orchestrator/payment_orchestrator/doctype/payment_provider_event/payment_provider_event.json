@@ -1,0 +1,53 @@
+{
+  "doctype": "DocType",
+  "name": "Payment Provider Event",
+  "module": "Payment Orchestrator",
+  "custom": 0,
+  "istable": 0,
+  "track_changes": 1,
+  "engine": "InnoDB",
+  "autoname": "hash",
+  "field_order": [
+    "provider",
+    "event_type",
+    "event_id",
+    "verification_status",
+    "processing_status",
+    "duplicate_guard_key",
+    "payment_intent",
+    "payment_entry",
+    "received_on",
+    "error_message",
+    "payload"
+  ],
+  "fields": [
+    {"fieldname": "provider", "fieldtype": "Data", "label": "Provider", "default": "Razorpay", "in_list_view": 1},
+    {"fieldname": "event_type", "fieldtype": "Data", "label": "Event Type", "in_list_view": 1},
+    {"fieldname": "event_id", "fieldtype": "Data", "label": "Event ID", "in_list_view": 1},
+    {"fieldname": "verification_status", "fieldtype": "Select", "label": "Verification Status", "options": "Pending\nVerified\nRejected", "default": "Pending"},
+    {"fieldname": "processing_status", "fieldtype": "Select", "label": "Processing Status", "options": "Pending\nProcessed\nFailed\nIgnored\nDuplicate", "default": "Pending"},
+    {"fieldname": "duplicate_guard_key", "fieldtype": "Data", "label": "Duplicate Guard Key"},
+    {"fieldname": "payment_intent", "fieldtype": "Link", "label": "Payment Intent", "options": "Payment Intent"},
+    {"fieldname": "payment_entry", "fieldtype": "Link", "label": "Payment Entry", "options": "Payment Entry"},
+    {"fieldname": "received_on", "fieldtype": "Datetime", "label": "Received On"},
+    {"fieldname": "error_message", "fieldtype": "Long Text", "label": "Error Message"},
+    {"fieldname": "payload", "fieldtype": "Long Text", "label": "Payload"}
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1,
+      "submit": 0,
+      "cancel": 0,
+      "amend": 0,
+      "report": 1,
+      "export": 1,
+      "share": 1,
+      "print": 1,
+      "email": 1
+    }
+  ]
+}
