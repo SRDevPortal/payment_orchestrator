@@ -6,6 +6,7 @@
  "docstatus": 0,
  "doctype": "Workspace",
  "hide_custom": 0,
+ "icon": "money-coins-1",
  "idx": 0,
  "indicator_color": "green",
  "is_hidden": 0,
@@ -13,7 +14,7 @@
  "links": [
   {
    "hidden": 0,
-   "icon": "payment",
+   "icon": "money-coins-1",
    "is_query_report": 0,
    "label": "Payment Operations",
    "link_count": 0,
