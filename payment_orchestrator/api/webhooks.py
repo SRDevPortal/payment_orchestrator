@@ -3,9 +3,15 @@ import hashlib
 from urllib.parse import parse_qsl
 
 import frappe
+from frappe.utils import escape_html
 
 from payment_orchestrator.logic import process_provider_payment_success
 from payment_orchestrator.api.pos import _apply_pinelabs_success
+from payment_orchestrator.api.provider import (
+    _is_pinelabs_payment_link_success,
+    _pinelabs_payment_link_success_payload,
+    _sync_pinelabs_payment_link,
+)
 from payment_orchestrator.utils import (
     get_settings,
     is_pinelabs_postback_enabled,
@@ -87,10 +93,11 @@ def payment_orchestrator():
 @frappe.whitelist(allow_guest=True)
 def pinelabs():
     payload = frappe.request.get_data(as_text=True) or ''
-    form = frappe.local.form_dict or {}
-    data = dict(form) if form else dict(parse_qsl(payload.replace('\n', '&').replace('\r', '&')))
+    data = _parse_pinelabs_payload(payload)
     settings = get_settings()
+    is_browser_callback = _is_browser_callback_request()
     guard_key = hashlib.sha256((payload or json.dumps(data, sort_keys=True)).encode('utf-8')).hexdigest()
+    event_type = data.get('event') or ('pinelabs.payment_link.callback' if _is_pinelabs_payment_link_payload(data) else 'pinelabs.postback')
 
     event = frappe.get_doc({
         'doctype': 'Payment Provider Event',
@@ -100,22 +107,28 @@ def pinelabs():
         'verification_status': 'Verified',
         'processing_status': 'Pending',
         'duplicate_guard_key': guard_key,
-        'event_type': 'pinelabs.postback',
-        'event_id': data.get('PlutusTransactionReferenceID'),
+        'event_type': event_type,
+        'event_id': _pinelabs_event_id(data),
     })
     event.insert(ignore_permissions=True)
 
     if not is_pinelabs_postback_enabled(settings=settings):
         event.db_set('processing_status', 'Ignored')
         event.db_set('error_message', 'Pine Labs postback processing disabled in settings')
-        return {'ok': True, 'ignored': True}
+        result = {'ok': True, 'ignored': True}
+        return _pinelabs_browser_callback_response(result, data, is_browser_callback)
+
+    if _is_pinelabs_payment_link_payload(data):
+        result = _process_pinelabs_payment_link_event(data, event)
+        return _pinelabs_browser_callback_response(result, data, is_browser_callback)
 
     ptrid = data.get('PlutusTransactionReferenceID')
     intent_name = frappe.db.get_value('Payment Intent', {'provider_pos_request_id': ptrid}, 'name')
     if not intent_name:
         event.db_set('processing_status', 'Ignored')
         event.db_set('error_message', f'No Payment Intent found for PTRID {ptrid}')
-        return {'ok': True, 'ignored': True}
+        result = {'ok': True, 'ignored': True}
+        return _pinelabs_browser_callback_response(result, data, is_browser_callback)
 
     intent = frappe.get_doc('Payment Intent', intent_name)
     response = {
@@ -131,7 +144,8 @@ def pinelabs():
         event.db_set('processing_status', 'Processed')
         event.db_set('payment_intent', intent.name)
         event.db_set('payment_entry', payment_entry)
-        return {'ok': True, 'payment_intent': intent.name, 'payment_entry': payment_entry}
+        result = {'ok': True, 'payment_intent': intent.name, 'payment_entry': payment_entry}
+        return _pinelabs_browser_callback_response(result, data, is_browser_callback)
 
     intent.db_set('payment_status', response['ResponseMessage'])
     intent.db_set('pos_request_status', response['ResponseMessage'])
@@ -139,7 +153,183 @@ def pinelabs():
     event.db_set('processing_status', 'Failed')
     event.db_set('payment_intent', intent.name)
     event.db_set('error_message', response['ResponseMessage'])
-    return {'ok': True, 'payment_intent': intent.name, 'status': response['ResponseMessage']}
+    result = {'ok': True, 'payment_intent': intent.name, 'status': response['ResponseMessage']}
+    return _pinelabs_browser_callback_response(result, data, is_browser_callback)
+
+
+def _parse_pinelabs_payload(payload):
+    if payload:
+        try:
+            data = json.loads(payload)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    form = frappe.local.form_dict or {}
+    if form:
+        return dict(form)
+    return dict(parse_qsl((payload or '').replace('\n', '&').replace('\r', '&')))
+
+
+def _is_browser_callback_request():
+    if not getattr(frappe.local, 'request', None):
+        return False
+
+    if frappe.request.method == 'GET':
+        return True
+
+    accept_header = (frappe.get_request_header('Accept') or '').lower()
+    content_type = (frappe.get_request_header('Content-Type') or '').lower()
+    return 'text/html' in accept_header and 'application/json' not in content_type
+
+
+def _pinelabs_browser_callback_response(result, data, is_browser_callback):
+    if not is_browser_callback:
+        return result
+
+    if result.get('ignored'):
+        title = 'Payment Update Pending'
+        message = 'Payment callback received, but automatic Pine Labs postback processing is disabled.'
+        indicator_color = 'orange'
+    elif result.get('payment_entry') or result.get('duplicate'):
+        title = 'Payment Received'
+        message = 'Your payment has been received successfully.'
+        indicator_color = 'green'
+    else:
+        title = 'Payment Status Updated'
+        message = 'Your payment status has been updated.'
+        indicator_color = 'blue'
+
+    detail_rows = []
+    payment_intent = result.get('payment_intent') or _pinelabs_callback_intent_name(data)
+    if payment_intent:
+        detail_rows.append(('Payment Intent', payment_intent))
+    if result.get('payment_entry'):
+        detail_rows.append(('Payment Entry', result.get('payment_entry')))
+    if result.get('status'):
+        detail_rows.append(('Status', result.get('status')))
+
+    details_html = ''.join(
+        f'<p><strong>{escape_html(label)}:</strong> {escape_html(str(value))}</p>'
+        for label, value in detail_rows
+        if value
+    )
+    html = f"""
+        <div>
+            <p>{escape_html(message)}</p>
+            {details_html}
+            <p class="text-muted small">You can close this window and return to the invoice.</p>
+        </div>
+        <script>
+            setTimeout(function() {{
+                if (window.opener) {{
+                    window.close();
+                }}
+            }}, 2500);
+        </script>
+    """
+    frappe.respond_as_web_page(
+        title=title,
+        html=html,
+        indicator_color=indicator_color,
+        primary_action='/',
+        primary_label='Home',
+        fullpage=True,
+    )
+    return None
+
+
+def _pinelabs_callback_intent_name(data):
+    source = data.get('data') if isinstance(data.get('data'), dict) else data
+    intent_name = source.get('merchant_payment_link_reference')
+    if intent_name and frappe.db.exists('Payment Intent', intent_name):
+        return intent_name
+    if source.get('payment_link_id'):
+        return frappe.db.get_value('Payment Intent', {'provider_link_id': source.get('payment_link_id')}, 'name')
+    if source.get('PlutusTransactionReferenceID'):
+        return frappe.db.get_value(
+            'Payment Intent',
+            {'provider_pos_request_id': source.get('PlutusTransactionReferenceID')},
+            'name',
+        )
+    return None
+
+
+def _pinelabs_event_id(data):
+    source = data.get('data') if isinstance(data.get('data'), dict) else data
+    return (
+        source.get('order_id')
+        or source.get('payment_link_id')
+        or source.get('PlutusTransactionReferenceID')
+        or source.get('merchant_payment_link_reference')
+    )
+
+
+def _is_pinelabs_payment_link_payload(data):
+    source = data.get('data') if isinstance(data.get('data'), dict) else data
+    event_name = data.get('event') or ''
+    return bool(
+        event_name.startswith('payment_link.')
+        or source.get('payment_link_id')
+        or source.get('merchant_payment_link_reference')
+    )
+
+
+def _process_pinelabs_payment_link_event(data, event):
+    link_data = _normalize_pinelabs_payment_link_event(data)
+    intent_name = (
+        link_data.get('merchant_payment_link_reference')
+        or frappe.db.get_value('Payment Intent', {'provider_link_id': link_data.get('payment_link_id')}, 'name')
+    )
+    if not intent_name or not frappe.db.exists('Payment Intent', intent_name):
+        event.db_set('processing_status', 'Ignored')
+        event.db_set('error_message', 'No Payment Intent found for Pine Labs payment link event')
+        return {'ok': True, 'ignored': True}
+
+    intent = frappe.get_doc('Payment Intent', intent_name)
+    _sync_pinelabs_payment_link(intent, link_data)
+    intent.reload()
+    event.db_set('payment_intent', intent.name)
+
+    if _is_pinelabs_payment_link_success(link_data):
+        if intent.amount_paid:
+            event.db_set('processing_status', 'Duplicate')
+            return {'ok': True, 'duplicate': True, 'payment_intent': intent.name}
+        result = process_provider_payment_success(
+            _pinelabs_payment_link_success_payload(link_data, intent),
+            event_doc=event,
+        )
+        event.db_set('processing_status', 'Processed')
+        event.db_set('payment_entry', result.get('payment_entry'))
+        return {'ok': True, **result}
+
+    status = (link_data.get('status') or '').upper()
+    if status in ('FAILED', 'CANCELLED', 'EXPIRED'):
+        mapped_status = 'Cancelled' if status == 'CANCELLED' else ('Expired' if status == 'EXPIRED' else 'Requested')
+        intent.db_set('status', mapped_status)
+        intent.db_set('payment_status', status)
+        event.db_set('processing_status', 'Failed' if status == 'FAILED' else 'Processed')
+        event.db_set('error_message', status if status == 'FAILED' else None)
+        return {'ok': True, 'payment_intent': intent.name, 'status': mapped_status}
+
+    event.db_set('processing_status', 'Processed')
+    return {'ok': True, 'payment_intent': intent.name, 'status': link_data.get('status')}
+
+
+def _normalize_pinelabs_payment_link_event(data):
+    source = data.get('data') if isinstance(data.get('data'), dict) else data
+    metadata = source.get('merchant_metadata') if isinstance(source.get('merchant_metadata'), dict) else {}
+    amount = source.get('amount') if isinstance(source.get('amount'), dict) else {'value': source.get('amount'), 'currency': source.get('currency') or 'INR'}
+    return {
+        'payment_link': source.get('payment_link'),
+        'payment_link_id': source.get('payment_link_id'),
+        'status': source.get('status'),
+        'amount': amount,
+        'amount_due': source.get('amount_due') if isinstance(source.get('amount_due'), dict) else None,
+        'order_id': source.get('order_id'),
+        'merchant_payment_link_reference': source.get('merchant_payment_link_reference'),
+        'merchant_metadata': metadata,
+    }
 
 
 def _dispatch_event(data, event_doc):

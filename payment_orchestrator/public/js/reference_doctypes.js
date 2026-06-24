@@ -91,6 +91,26 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
                 const intent = r.message || {};
                 if (payment_orchestrator.is_payment_complete(intent)) {
                     complete(intent);
+                    return;
+                }
+                if (
+                    intent.payment_mode === 'Payment Link'
+                    && intent.provider_link_id
+                    && ['Pine Labs', 'Razorpay'].includes(intent.gateway)
+                ) {
+                    frappe.call({
+                        method: 'payment_orchestrator.api.provider.fetch_payment_link',
+                        args: { payment_intent },
+                        callback(fetch_response) {
+                            const result = (fetch_response.message || {}).result || {};
+                            if (result.payment_intent || (fetch_response.message || {}).processed) {
+                                poll();
+                            }
+                        },
+                        error() {
+                            // Keep the UI watcher alive; webhook/callback may still update the intent.
+                        }
+                    });
                 }
             }
         });

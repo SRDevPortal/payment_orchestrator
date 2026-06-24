@@ -2,7 +2,7 @@ import frappe
 from frappe.utils import get_datetime
 
 from payment_orchestrator.provider.pinelabs.online import PineLabsOnlineClient
-from payment_orchestrator.utils import as_json
+from payment_orchestrator.utils import as_json, get_public_webhook_url
 
 
 class PineLabsPaymentLinkAdapter:
@@ -59,10 +59,9 @@ class PineLabsPaymentLinkAdapter:
                 "reference_name": intent.reference_name,
                 "request_type": intent.request_type,
             },
-            "callback_url": getattr(self.settings, "pinelabs_payment_link_callback_url", None),
-            "failure_callback_url": getattr(self.settings, "pinelabs_payment_link_failure_callback_url", None),
             "part_payment": bool(context.get("allow_partial")),
         }
+        payload.update(_callback_payload(self.settings))
         return _clean(payload)
 
 
@@ -75,6 +74,18 @@ def _format_expiry(value):
 def _allowed_methods(settings):
     raw = getattr(settings, "pinelabs_payment_link_allowed_methods", None) or "CARD,UPI"
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _callback_payload(settings):
+    display = getattr(settings, "pinelabs_payment_link_after_payment_display", None) or "Pine Labs Default Page"
+    if display == "Pine Labs Default Page":
+        return {}
+
+    webhook_url = get_public_webhook_url("/api/method/payment_orchestrator.api.webhooks.pinelabs")
+    return {
+        "callback_url": getattr(settings, "pinelabs_payment_link_callback_url", None) or webhook_url,
+        "failure_callback_url": getattr(settings, "pinelabs_payment_link_failure_callback_url", None) or webhook_url,
+    }
 
 
 def _customer_payload(intent, context):

@@ -9,6 +9,7 @@ from payment_orchestrator.provider.razorpay.qr_code import RazorpayQRCodeAdapter
 from payment_orchestrator.logic import _extract_payment_entity
 from payment_orchestrator.payment_orchestrator.doctype.payment_orchestrator_settings.payment_orchestrator_settings import (
     PINELABS_BASE_URL,
+    PINELABS_PAYMENT_LINK_DEFAULT_DISPLAY,
     PINELABS_ONLINE_BASE_URL,
     RAZORPAY_API_BASE_URL,
     PaymentOrchestratorSettings,
@@ -48,6 +49,7 @@ class ResetInactiveGatewayFieldsTests(TestCase):
             "enable_pinelabs_pos": 1,
             "enable_pinelabs_postback_processing": 1,
             "pinelabs_payment_link_mode": "Live",
+            "pinelabs_payment_link_after_payment_display": "Payment Orchestrator Page",
             "pinelabs_online_client_id": "online-client",
             "pinelabs_online_base_url": "https://custom-pinelabs.example",
             "pinelabs_payment_link_callback_url": "https://example.com/success",
@@ -90,6 +92,7 @@ class ResetInactiveGatewayFieldsTests(TestCase):
         PaymentOrchestratorSettings.reset_inactive_pinelabs_fields(settings)
 
         self.assertEqual(settings.pinelabs_payment_link_mode, "Test")
+        self.assertEqual(settings.pinelabs_payment_link_after_payment_display, PINELABS_PAYMENT_LINK_DEFAULT_DISPLAY)
         self.assertIsNone(settings.pinelabs_online_client_id)
         self.assertEqual(settings.pinelabs_online_base_url, PINELABS_ONLINE_BASE_URL)
         self.assertIsNone(settings.pinelabs_payment_link_callback_url)
@@ -202,15 +205,18 @@ class RazorpayClientCredentialModeTests(TestCase):
 
 
 class PineLabsPaymentLinkAdapterTests(TestCase):
-    def _settings(self, secret=None):
+    def _settings(self, secret=None, **overrides):
         class Settings(SimpleNamespace):
             def get_password(self, fieldname, raise_exception=False):
                 return secret
 
-        return Settings(
-            pinelabs_online_client_id="client-id",
-            pinelabs_payment_link_allowed_methods="CARD,UPI",
-        )
+        defaults = {
+            "pinelabs_online_client_id": "client-id",
+            "pinelabs_payment_link_allowed_methods": "CARD,UPI",
+            "pinelabs_payment_link_after_payment_display": PINELABS_PAYMENT_LINK_DEFAULT_DISPLAY,
+        }
+        defaults.update(overrides)
+        return Settings(**defaults)
 
     def test_adapter_requires_online_credentials(self):
         adapter = PineLabsPaymentLinkAdapter(settings=self._settings(secret=None))
@@ -245,6 +251,33 @@ class PineLabsPaymentLinkAdapterTests(TestCase):
         self.assertEqual(payload["allowed_payment_methods"], ["CARD", "UPI"])
         self.assertTrue(payload["part_payment"])
         self.assertEqual(payload["customer"]["mobile_number"], "9876543210")
+        self.assertNotIn("callback_url", payload)
+        self.assertNotIn("failure_callback_url", payload)
+
+    def test_build_payload_can_send_orchestrator_callback_urls(self):
+        adapter = PineLabsPaymentLinkAdapter(settings=self._settings(
+            secret="secret",
+            pinelabs_payment_link_after_payment_display="Payment Orchestrator Page",
+        ))
+        intent = SimpleNamespace(
+            name="PI-0001",
+            amount_requested=1,
+            currency="INR",
+            reference_doctype="Sales Invoice",
+            reference_name="SINV-0001",
+            request_type="Against Invoice",
+            expires_on=None,
+            party_name="Test Customer",
+            party_email="test@example.com",
+            party_mobile="9876543210",
+            party="CUST-0001",
+        )
+
+        with patch("payment_orchestrator.provider.pinelabs.payment_link.get_public_webhook_url", return_value="https://site.example/api/method/payment_orchestrator.api.webhooks.pinelabs"):
+            payload = adapter.build_payload(intent, {"allow_partial": False})
+
+        self.assertEqual(payload["callback_url"], "https://site.example/api/method/payment_orchestrator.api.webhooks.pinelabs")
+        self.assertEqual(payload["failure_callback_url"], "https://site.example/api/method/payment_orchestrator.api.webhooks.pinelabs")
 
 
 class RazorpayWebhookPayloadTests(TestCase):

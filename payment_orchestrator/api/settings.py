@@ -34,6 +34,7 @@ def get_settings_context():
         'enable_pinelabs': get_flag(doc, 'enable_pinelabs', 1),
         'enable_pinelabs_payment_link': is_pinelabs_payment_link_enabled(settings=doc),
         'pinelabs_payment_link_mode': getattr(doc, 'pinelabs_payment_link_mode', None),
+        'pinelabs_payment_link_after_payment_display': getattr(doc, 'pinelabs_payment_link_after_payment_display', None),
         'enable_pinelabs_pos': is_pinelabs_pos_enabled(settings=doc),
         'pinelabs_pos_mode': getattr(doc, 'pinelabs_pos_mode', None),
         'webhook_url': get_public_webhook_url(),

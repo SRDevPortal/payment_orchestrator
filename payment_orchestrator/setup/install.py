@@ -71,7 +71,7 @@ def after_install():
 
 
 def ensure_default_modes_of_payment():
-    for mode in ("Razorpay", "Pine Labs POS"):
+    for mode in ("Razorpay", "Pine Labs", "Pine Labs POS"):
         if not frappe.db.exists("Mode of Payment", mode):
             frappe.get_doc({
                 "doctype": "Mode of Payment",

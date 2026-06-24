@@ -29,6 +29,9 @@ frappe.ui.form.on('Payment Orchestrator Settings', {
     enable_pinelabs_payment_link(frm) {
         payment_orchestrator_settings_apply_visibility(frm);
     },
+    pinelabs_payment_link_after_payment_display(frm) {
+        payment_orchestrator_settings_apply_visibility(frm);
+    },
     enable_pinelabs_postback_processing(frm) {
         payment_orchestrator_settings_apply_visibility(frm);
     },
@@ -83,6 +86,7 @@ function payment_orchestrator_settings_apply_visibility(frm) {
     const pinelabs = Boolean(frm.doc.enable_pinelabs);
     const pinelabs_pos = pinelabs && Boolean(frm.doc.enable_pinelabs_pos);
     const pinelabs_link = pinelabs && Boolean(frm.doc.enable_pinelabs_payment_link);
+    const pinelabs_orchestrator_page = frm.doc.pinelabs_payment_link_after_payment_display === 'Payment Orchestrator Page';
 
     const advanced_fields = [
         'section_feature_flags',
@@ -168,10 +172,14 @@ function payment_orchestrator_settings_apply_visibility(frm) {
     [
         'pinelabs_online_client_id',
         'pinelabs_online_client_secret',
+        'pinelabs_payment_link_mode',
+        'pinelabs_payment_link_after_payment_display',
+    ].forEach((fieldname) => frm.toggle_display(fieldname, pinelabs_link));
+
+    [
         'pinelabs_payment_link_callback_url',
         'pinelabs_payment_link_failure_callback_url',
-        'pinelabs_payment_link_mode',
-    ].forEach((fieldname) => frm.toggle_display(fieldname, pinelabs_link));
+    ].forEach((fieldname) => frm.toggle_display(fieldname, pinelabs_link && pinelabs_orchestrator_page));
 
     [
         'pinelabs_online_base_url',

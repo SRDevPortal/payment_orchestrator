@@ -250,8 +250,12 @@ def _resolve_paid_to_account(intent, settings):
 
 
 def _resolve_mode_of_payment(intent, settings):
-    mode = settings.pos_mode_of_payment if intent.request_channel == 'POS' else settings.default_mode_of_payment
-    mode = mode or ('Pine Labs POS' if intent.request_channel == 'POS' else 'Razorpay')
+    if intent.request_channel == 'POS':
+        mode = settings.pos_mode_of_payment or 'Pine Labs POS'
+    elif intent.gateway == 'Pine Labs':
+        mode = 'Pine Labs'
+    else:
+        mode = settings.default_mode_of_payment or 'Razorpay'
     if not frappe.db.exists('Mode of Payment', mode):
         frappe.get_doc({
             'doctype': 'Mode of Payment',

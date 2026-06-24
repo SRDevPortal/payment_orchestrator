@@ -1,6 +1,7 @@
 import frappe
 from frappe.utils import cint, now_datetime
 
+from payment_orchestrator.api.provider import fetch_payment_link
 from payment_orchestrator.logic import allocate_available_amount, refresh_intent_and_reference
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
 from payment_orchestrator.utils import get_settings
@@ -19,12 +20,11 @@ def run_periodic_sync():
     for row in stale_intents:
         try:
             intent = frappe.get_doc('Payment Intent', row.name)
-            client = RazorpayClient(settings=settings, mode=intent.provider_mode or 'Test')
             if row.provider_link_id:
-                data = client.fetch_payment_link(row.provider_link_id)
-                intent.db_set('payment_status', data.get('status'))
-                intent.db_set('last_synced_on', now_datetime())
+                fetch_payment_link(intent.name)
+                intent.reload()
             if row.provider_qr_id:
+                client = RazorpayClient(settings=settings, mode=intent.provider_mode or 'Test')
                 data = client.fetch_qr_code(row.provider_qr_id)
                 intent.db_set('qr_status', data.get('status'))
                 intent.db_set('payment_status', data.get('status'))

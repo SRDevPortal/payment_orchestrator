@@ -12,6 +12,7 @@ PINELABS_CANCEL_PATH = "/API/CloudBasedIntegration/V1/CancelTransaction"
 PINELABS_ONLINE_BASE_URL = "https://pluraluat.v2.pinepg.in"
 PINELABS_ONLINE_AUTH_PATH = "/api/auth/v1/token"
 PINELABS_PAYMENT_LINK_PATH = "/api/pay/v1/paymentlink"
+PINELABS_PAYMENT_LINK_DEFAULT_DISPLAY = "Pine Labs Default Page"
 
 
 class PaymentOrchestratorSettings(Document):
@@ -30,6 +31,7 @@ class PaymentOrchestratorSettings(Document):
 		self.enable_pinelabs_postback_processing = 1 if self.enable_pinelabs_postback_processing is None else self.enable_pinelabs_postback_processing
 		self.pinelabs_pos_mode = self.pinelabs_pos_mode or "Test"
 		self.pinelabs_payment_link_mode = self.pinelabs_payment_link_mode or "Test"
+		self.pinelabs_payment_link_after_payment_display = self.pinelabs_payment_link_after_payment_display or PINELABS_PAYMENT_LINK_DEFAULT_DISPLAY
 		if not self.api_base_url or "api.payment_orchestrator.com" in self.api_base_url:
 			self.api_base_url = RAZORPAY_API_BASE_URL
 		self.api_base_url = self.api_base_url.rstrip("/")
@@ -136,6 +138,7 @@ class PaymentOrchestratorSettings(Document):
 			self.pinelabs_online_auth_path = PINELABS_ONLINE_AUTH_PATH
 			self.pinelabs_payment_link_path = PINELABS_PAYMENT_LINK_PATH
 			self.pinelabs_payment_link_allowed_methods = "CARD,UPI"
+			self.pinelabs_payment_link_after_payment_display = PINELABS_PAYMENT_LINK_DEFAULT_DISPLAY
 			self.pinelabs_payment_link_callback_url = None
 			self.pinelabs_payment_link_failure_callback_url = None
 
