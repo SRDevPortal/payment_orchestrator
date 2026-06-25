@@ -22,6 +22,11 @@ def auto_allocate(payment_intent):
 def sync_reference_summary(reference_doctype=None, reference_name=None, doc=None, method=None):
     from payment_orchestrator.services import update_reference_payment_summary
 
+    if getattr(reference_doctype, "doctype", None) and not isinstance(reference_doctype, str):
+        doc = reference_doctype
+        reference_doctype = None
+        reference_name = None
+
     if doc is not None:
         reference_doctype = doc.doctype
         reference_name = doc.name
