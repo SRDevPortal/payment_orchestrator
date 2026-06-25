@@ -1,13 +1,17 @@
+import json
+
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
+from frappe.utils import cint
 
 
 LINKED_REFERENCE_DOCTYPE = "Payment Intent"
+SALES_INVOICE_PAYMENT_SUMMARY_ANCHOR = "si_support_actions_html"
 
 
 REFERENCE_SUMMARY_FIELDS = {
     'CRM Lead': [
-        {'fieldname': 'po_payment_tab', 'label': 'Payments', 'fieldtype': 'Tab Break', 'insert_after': 'lead_name'},
+        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': 'lead_name'},
         {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
@@ -15,7 +19,7 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_last_payment_intent', 'label': 'Last Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
     ],
     'Patient Encounter': [
-        {'fieldname': 'po_payment_tab', 'label': 'Payments', 'fieldtype': 'Tab Break', 'insert_after': 'enc_multi_payments'},
+        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': 'enc_multi_payments'},
         {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
@@ -23,7 +27,7 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_last_payment_intent', 'label': 'Last Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
     ],
     'Sales Order': [
-        {'fieldname': 'po_payment_tab', 'label': 'Payments', 'fieldtype': 'Tab Break', 'insert_after': 'payment_schedule'},
+        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': 'payment_schedule'},
         {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
@@ -31,7 +35,7 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_last_payment_intent', 'label': 'Last Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
     ],
     'Sales Invoice': [
-        {'fieldname': 'po_payment_tab', 'label': 'Payments', 'fieldtype': 'Tab Break', 'insert_after': 'payments_tab'},
+        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': SALES_INVOICE_PAYMENT_SUMMARY_ANCHOR},
         {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
@@ -66,8 +70,131 @@ def _reference_summary_fields_for_install():
 
 def after_install():
     create_custom_fields(_reference_summary_fields_for_install(), update=True)
+    sync_reference_field_placement()
+    sync_reference_field_visibility()
     ensure_default_modes_of_payment()
     frappe.db.commit()
+
+
+def sync_reference_field_placement():
+    sync_reference_field_labels()
+
+    if not frappe.db.exists("DocType", "Sales Invoice"):
+        return
+
+    anchor = _sales_invoice_payment_summary_anchor()
+    payment_fields = REFERENCE_SUMMARY_FIELDS.get("Sales Invoice", [])
+    anchor_idx = _field_idx("Sales Invoice", anchor) or 0
+
+    for offset, field in enumerate(payment_fields, 1):
+        custom_field = f"Sales Invoice-{field['fieldname']}"
+        if not frappe.db.exists("Custom Field", custom_field):
+            continue
+
+        updates = {"idx": anchor_idx + offset}
+        if field["fieldname"] == "po_payment_tab":
+            updates.update({
+                "label": field["label"],
+                "insert_after": anchor,
+            })
+        else:
+            updates["insert_after"] = field["insert_after"]
+        frappe.db.set_value("Custom Field", custom_field, updates, update_modified=False)
+
+    _sync_sales_invoice_field_order(anchor, [field["fieldname"] for field in payment_fields])
+    frappe.clear_cache(doctype="Sales Invoice")
+
+
+def sync_reference_field_labels():
+    for dt, fields in REFERENCE_SUMMARY_FIELDS.items():
+        if not frappe.db.exists("DocType", dt):
+            continue
+        for field in fields:
+            custom_field = f"{dt}-{field['fieldname']}"
+            if frappe.db.exists("Custom Field", custom_field):
+                frappe.db.set_value(
+                    "Custom Field",
+                    custom_field,
+                    "label",
+                    field["label"],
+                    update_modified=False,
+                )
+        frappe.clear_cache(doctype=dt)
+
+
+def _sales_invoice_payment_summary_anchor() -> str:
+    if frappe.db.exists("Custom Field", f"Sales Invoice-{SALES_INVOICE_PAYMENT_SUMMARY_ANCHOR}"):
+        return SALES_INVOICE_PAYMENT_SUMMARY_ANCHOR
+    if frappe.db.exists("Custom Field", "Sales Invoice-si_shipkia_shipment"):
+        return "si_shipkia_shipment"
+    return "payments_tab"
+
+
+def _field_idx(dt: str, fieldname: str) -> int:
+    custom_idx = frappe.db.get_value("Custom Field", {"dt": dt, "fieldname": fieldname}, "idx")
+    if custom_idx is not None:
+        return cint(custom_idx)
+
+    standard_idx = frappe.db.get_value("DocField", {"parent": dt, "fieldname": fieldname}, "idx")
+    return cint(standard_idx)
+
+
+def _sync_sales_invoice_field_order(anchor: str, payment_fieldnames: list[str]):
+    property_setters = frappe.get_all(
+        "Property Setter",
+        filters={
+            "doc_type": "Sales Invoice",
+            "property": "field_order",
+        },
+        pluck="name",
+    )
+    if not property_setters:
+        return
+
+    for property_setter in property_setters:
+        value = frappe.db.get_value("Property Setter", property_setter, "value")
+        if not value:
+            continue
+        try:
+            field_order = json.loads(value)
+        except ValueError:
+            continue
+
+        field_order = [fieldname for fieldname in field_order if fieldname not in payment_fieldnames]
+        insert_at = field_order.index(anchor) + 1 if anchor in field_order else len(field_order)
+        field_order[insert_at:insert_at] = payment_fieldnames
+        frappe.db.set_value(
+            "Property Setter",
+            property_setter,
+            "value",
+            json.dumps(field_order),
+            update_modified=False,
+        )
+
+
+def sync_reference_field_visibility():
+    settings = frappe.get_single("Payment Orchestrator Settings")
+    enabled_by_doctype = {
+        "CRM Lead": _enabled_setting(settings, "enable_on_crm_lead"),
+        "Patient Encounter": _enabled_setting(settings, "enable_on_patient_encounter"),
+        "Sales Order": _enabled_setting(settings, "enable_on_sales_order"),
+        "Sales Invoice": _enabled_setting(settings, "enable_on_sales_invoice"),
+    }
+
+    for dt, enabled in enabled_by_doctype.items():
+        if not frappe.db.exists("DocType", dt):
+            continue
+        hidden = 0 if enabled else 1
+        for field in REFERENCE_SUMMARY_FIELDS.get(dt, []):
+            custom_field = f"{dt}-{field['fieldname']}"
+            if frappe.db.exists("Custom Field", custom_field):
+                frappe.db.set_value("Custom Field", custom_field, "hidden", hidden, update_modified=False)
+        frappe.clear_cache(doctype=dt)
+
+
+def _enabled_setting(settings, fieldname: str) -> int:
+    value = getattr(settings, fieldname, None)
+    return 1 if value is None else cint(value)
 
 
 def ensure_default_modes_of_payment():

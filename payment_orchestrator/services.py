@@ -171,6 +171,16 @@ def get_allocation_targets(intent) -> list[dict]:
 
 
 def update_reference_payment_summary(reference_doctype: str, reference_name: str) -> dict:
+    if not is_doctype_enabled(reference_doctype):
+        return {
+            'reference_doctype': reference_doctype,
+            'reference_name': reference_name,
+            'total_requested': 0,
+            'total_paid': 0,
+            'total_allocated': 0,
+            'total_unallocated': 0,
+        }
+
     total_requested = frappe.db.sql(
         """
         select coalesce(sum(amount_requested), 0) as total_requested,
@@ -214,7 +224,7 @@ def update_reference_payment_summary(reference_doctype: str, reference_name: str
 
 def _update_reference_summary(reference_doctype: str, reference_name: str):
     settings = get_settings()
-    if cint(settings.enable_payment_summary_sync):
+    if cint(settings.enable_payment_summary_sync) and is_doctype_enabled(reference_doctype):
         update_reference_payment_summary(reference_doctype, reference_name)
 
 

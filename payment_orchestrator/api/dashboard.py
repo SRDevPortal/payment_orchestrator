@@ -1,10 +1,14 @@
 import frappe
 
 from payment_orchestrator.services import update_reference_payment_summary
+from payment_orchestrator.utils import is_doctype_enabled
 
 
 @frappe.whitelist()
 def get_reference_dashboard(reference_doctype, reference_name):
+    if not is_doctype_enabled(reference_doctype):
+        frappe.throw(f'Payment Orchestrator is disabled for {reference_doctype}')
+
     summary = update_reference_payment_summary(reference_doctype, reference_name)
     intents = frappe.get_all(
         'Payment Intent',

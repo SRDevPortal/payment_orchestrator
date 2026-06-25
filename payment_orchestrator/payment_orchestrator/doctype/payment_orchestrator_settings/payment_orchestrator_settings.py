@@ -60,6 +60,15 @@ class PaymentOrchestratorSettings(Document):
 		if self.provider_enabled and self.enable_razorpay and not self.has_razorpay_credentials_for_active_modes():
 			frappe.msgprint("Razorpay is enabled but API credentials are missing for one or more active Razorpay modes.")
 
+	def on_update(self):
+		from payment_orchestrator.setup.install import (
+			sync_reference_field_placement,
+			sync_reference_field_visibility,
+		)
+
+		sync_reference_field_placement()
+		sync_reference_field_visibility()
+
 	def reset_inactive_gateway_fields(self):
 		self.reset_inactive_razorpay_fields()
 		self.reset_inactive_pinelabs_fields()

@@ -1,6 +1,7 @@
 import frappe
 
 from payment_orchestrator.logic import allocate_available_amount, refresh_intent_and_reference
+from payment_orchestrator.utils import is_doctype_enabled
 
 
 @frappe.whitelist()
@@ -31,6 +32,8 @@ def sync_reference_summary(reference_doctype=None, reference_name=None, doc=None
         reference_doctype = doc.doctype
         reference_name = doc.name
     if not reference_doctype or not reference_name:
+        return None
+    if not is_doctype_enabled(reference_doctype):
         return None
     return update_reference_payment_summary(reference_doctype, reference_name)
 

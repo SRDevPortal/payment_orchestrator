@@ -4,7 +4,7 @@ from frappe.utils import cint, flt, now_datetime
 from payment_orchestrator.logic import create_payment_entry_for_intent, refresh_intent_and_reference
 from payment_orchestrator.provider.pinelabs.pos import PineLabsPOSAdapter
 from payment_orchestrator.services import create_payment_intent_doc
-from payment_orchestrator.utils import as_json, get_flag, get_settings, is_pinelabs_pos_enabled
+from payment_orchestrator.utils import as_json, get_flag, get_settings, is_doctype_enabled, is_pinelabs_pos_enabled
 
 
 PAYMENT_ROLES = ("Accounts Manager", "Accounts User", "System Manager")
@@ -153,6 +153,9 @@ def _pinelabs_amount(response):
 @frappe.whitelist()
 def mock_pos_payment(reference_doctype, reference_name, amount=None, notes=None, pos_device_id=None, make_default=0):
     _require_payment_role()
+    if not is_doctype_enabled(reference_doctype):
+        frappe.throw(f"Payment Orchestrator is disabled for {reference_doctype}")
+
     settings = get_settings()
     if not is_pinelabs_pos_enabled(settings=settings):
         frappe.throw("Pine Labs POS is disabled in Payment Orchestrator Settings")

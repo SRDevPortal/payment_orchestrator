@@ -19,6 +19,24 @@ payment_orchestrator.is_doctype_enabled = function(frm, settings) {
     return !!mapping[frm.doctype];
 };
 
+payment_orchestrator.payment_summary_fields = [
+    'po_payment_tab',
+    'po_total_requested',
+    'po_total_paid',
+    'po_total_allocated',
+    'po_total_unallocated',
+    'po_last_payment_intent',
+];
+
+payment_orchestrator.toggle_payment_summary_fields = function(frm, settings) {
+    const visible = payment_orchestrator.is_doctype_enabled(frm, settings);
+    payment_orchestrator.payment_summary_fields.forEach((fieldname) => {
+        if (frm.fields_dict[fieldname]) {
+            frm.toggle_display(fieldname, visible);
+        }
+    });
+};
+
 payment_orchestrator.get_pos_context = function(callback) {
     frappe.call({
         method: 'payment_orchestrator.api.pos.get_pos_context',
@@ -161,7 +179,7 @@ payment_orchestrator.render_dashboard = function(frm) {
                 </div>
             `;
             if (!frm.fields_dict.po_payment_dashboard_html) {
-                frm.dashboard.add_section(html, __('Payments'));
+                frm.dashboard.add_section(html, __('Payment Summary'));
             } else {
                 frm.fields_dict.po_payment_dashboard_html.$wrapper.html(html);
             }
@@ -216,7 +234,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
             }
         });
         dialog.show();
-        }, __('Payments'));
+        }, __('Payment Summary'));
     }
 
     if (settings.enable_razorpay_qr_code && ['Patient Encounter', 'Sales Order', 'Sales Invoice'].includes(frm.doctype)) {
@@ -263,7 +281,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                 }
             });
             dialog.show();
-        }, __('Payments'));
+        }, __('Payment Summary'));
     }
 
     if (settings.enable_pinelabs_payment_link) {
@@ -310,7 +328,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                 }
             });
             dialog.show();
-        }, __('Payments'));
+        }, __('Payment Summary'));
     }
 
     if (settings.enable_pinelabs_pos && frm.doctype === 'Sales Invoice' && frm.doc.docstatus === 1) {
@@ -347,7 +365,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                 }
             });
             dialog.show();
-        }, __('Payments'));
+        }, __('Payment Summary'));
     }
 
     if (settings.enable_pinelabs_pos && ['Patient Encounter', 'Sales Invoice'].includes(frm.doctype)) {
@@ -385,7 +403,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                 }
             });
             dialog.show();
-        }, __('Payments'));
+        }, __('Payment Summary'));
     }
 
     frm.add_custom_button(__('Refresh Payment Summary'), function() {
@@ -394,13 +412,14 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
             args: { reference_doctype: frm.doctype, reference_name: frm.doc.name },
             callback() { frm.reload_doc(); }
         });
-    }, __('Payments'));
+    }, __('Payment Summary'));
 };
 
 ['CRM Lead', 'Patient Encounter', 'Sales Order', 'Sales Invoice'].forEach((doctype) => {
     frappe.ui.form.on(doctype, {
         refresh(frm) {
             payment_orchestrator.get_settings_context((settings) => {
+                payment_orchestrator.toggle_payment_summary_fields(frm, settings);
                 payment_orchestrator.add_request_payment_button(frm, settings);
                 if (settings.show_payment_summary_on_reference_doctypes && payment_orchestrator.is_doctype_enabled(frm, settings)) {
                     payment_orchestrator.render_dashboard(frm);
