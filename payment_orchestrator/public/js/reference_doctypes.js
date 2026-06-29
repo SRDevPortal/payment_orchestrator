@@ -73,6 +73,124 @@ payment_orchestrator.stop_payment_watcher = function(payment_intent) {
     delete payment_orchestrator.payment_watchers[payment_intent];
 };
 
+payment_orchestrator.escape_html = function(value) {
+    return frappe.utils.escape_html(String(value || ''));
+};
+
+payment_orchestrator.copy_text = function(value, message) {
+    const text = String(value || '');
+    if (!text) return;
+
+    if (frappe.utils && frappe.utils.copy_to_clipboard) {
+        frappe.utils.copy_to_clipboard(text);
+        frappe.show_alert({ message: message || __('Copied'), indicator: 'green' }, 5);
+        return;
+    }
+
+    navigator.clipboard.writeText(text).then(() => {
+        frappe.show_alert({ message: message || __('Copied'), indicator: 'green' }, 5);
+    });
+};
+
+payment_orchestrator.download_url = function(url, filename) {
+    const download = function(object_url) {
+        const link = document.createElement('a');
+        link.href = object_url;
+        link.download = filename || 'payment-qr-code.png';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    fetch(url)
+        .then((response) => {
+            if (!response.ok) {
+                throw new Error('Unable to download');
+            }
+            return response.blob();
+        })
+        .then((blob) => {
+            const object_url = URL.createObjectURL(blob);
+            download(object_url);
+            setTimeout(() => URL.revokeObjectURL(object_url), 1000);
+        })
+        .catch(() => {
+            window.open(url, '_blank');
+            frappe.show_alert({
+                message: __('QR opened in a new tab. Use browser save if download is blocked.'),
+                indicator: 'orange'
+            }, 8);
+        });
+};
+
+payment_orchestrator.payment_result_button = function(label, action, value, extra_attrs) {
+    const attrs = [
+        `data-po-action="${payment_orchestrator.escape_html(action)}"`,
+        `data-po-value="${payment_orchestrator.escape_html(value)}"`,
+        extra_attrs || '',
+    ].join(' ');
+    return `<button type="button" class="btn btn-xs btn-default" ${attrs}>${payment_orchestrator.escape_html(label)}</button>`;
+};
+
+payment_orchestrator.render_payment_link_result = function(data) {
+    const intent = payment_orchestrator.escape_html(data.payment_intent || '');
+    const url = payment_orchestrator.escape_html(data.payment_link_url || '');
+    return `
+        <div class="po-payment-result">
+            <p>${__('Payment Intent')}: <b>${intent}</b></p>
+            <p><a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a></p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                ${payment_orchestrator.payment_result_button(__('Copy Link'), 'copy', data.payment_link_url || '')}
+                ${payment_orchestrator.payment_result_button(__('Open Link'), 'open', data.payment_link_url || '')}
+            </div>
+        </div>
+    `;
+};
+
+payment_orchestrator.render_qr_result = function(data) {
+    const intent = payment_orchestrator.escape_html(data.payment_intent || '');
+    const url = payment_orchestrator.escape_html(data.qr_code_url || '');
+    const filename = payment_orchestrator.escape_html(`payment-qr-${data.payment_intent || frappe.datetime.now_datetime()}.png`);
+    return `
+        <div class="po-payment-result">
+            <p>${__('Payment Intent')}: <b>${intent}</b></p>
+            <p><a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a></p>
+            <div style="margin-top:12px;">
+                <img src="${url}" style="max-width:260px;width:100%;height:auto;border:1px solid #e5e7eb;padding:8px;border-radius:6px;background:#fff;">
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                ${payment_orchestrator.payment_result_button(__('Copy QR Link'), 'copy', data.qr_code_url || '')}
+                ${payment_orchestrator.payment_result_button(__('Open QR'), 'open', data.qr_code_url || '')}
+                ${payment_orchestrator.payment_result_button(
+                    __('Download QR Code'),
+                    'download',
+                    data.qr_code_url || '',
+                    `data-po-filename="${filename}"`
+                )}
+            </div>
+        </div>
+    `;
+};
+
+payment_orchestrator.bind_payment_result_actions = function() {
+    if (payment_orchestrator.payment_result_actions_bound) return;
+    payment_orchestrator.payment_result_actions_bound = true;
+
+    $(document).on('click', '[data-po-action]', function() {
+        const $button = $(this);
+        const action = $button.attr('data-po-action');
+        const value = $button.attr('data-po-value');
+
+        if (action === 'copy') {
+            payment_orchestrator.copy_text(value, __('Copied'));
+        } else if (action === 'open') {
+            window.open(value, '_blank', 'noopener');
+        } else if (action === 'download') {
+            payment_orchestrator.download_url(value, $button.attr('data-po-filename'));
+        }
+    });
+};
+
 payment_orchestrator.watch_payment_completion = function(payment_intent, options) {
     if (!payment_intent) return;
     const opts = options || {};
@@ -225,7 +343,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                         if (data.payment_link_url) {
                             frappe.msgprint({
                                 title: __('Payment Link Created'),
-                                message: `<div><p>${__('Payment Intent')}: <b>${data.payment_intent}</b></p><p><a href="${data.payment_link_url}" target="_blank">${data.payment_link_url}</a></p></div>`,
+                                message: payment_orchestrator.render_payment_link_result(data),
                                 indicator: 'green'
                             });
                             payment_orchestrator.watch_payment_completion(data.payment_intent, {
@@ -269,10 +387,9 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                             const data = r.message || {};
                             dialog.hide();
                             if (data.qr_code_url) {
-                                const url = frappe.utils.escape_html(data.qr_code_url);
                                 frappe.msgprint({
                                     title: __('QR Code Created'),
-                                    message: `<div><p>${__('Payment Intent')}: <b>${frappe.utils.escape_html(data.payment_intent || '')}</b></p><p><a href="${url}" target="_blank">${url}</a></p><div style="margin-top:12px;"><img src="${url}" style="max-width:260px;width:100%;height:auto;border:1px solid #e5e7eb;padding:8px;border-radius:6px;background:#fff;"></div></div>`,
+                                    message: payment_orchestrator.render_qr_result(data),
                                     indicator: 'green'
                                 });
                                 payment_orchestrator.watch_payment_completion(data.payment_intent, {
@@ -319,7 +436,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                             if (data.payment_link_url) {
                                 frappe.msgprint({
                                     title: __('Payment Link Created'),
-                                    message: `<div><p>${__('Payment Intent')}: <b>${data.payment_intent}</b></p><p><a href="${data.payment_link_url}" target="_blank">${data.payment_link_url}</a></p></div>`,
+                                    message: payment_orchestrator.render_payment_link_result(data),
                                     indicator: 'green'
                                 });
                                 payment_orchestrator.watch_payment_completion(data.payment_intent, {
@@ -422,6 +539,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
 
 if (!payment_orchestrator.reference_doctype_handlers_bound) {
     payment_orchestrator.reference_doctype_handlers_bound = true;
+    payment_orchestrator.bind_payment_result_actions();
 
     ['CRM Lead', 'Patient Encounter', 'Sales Order', 'Sales Invoice'].forEach((doctype) => {
         frappe.ui.form.on(doctype, {
