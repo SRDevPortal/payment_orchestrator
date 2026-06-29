@@ -4,3 +4,6 @@
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
+payment_orchestrator.patches.add_payment_dashboard_html_field
+payment_orchestrator.patches.fix_patient_encounter_payment_layout
+payment_orchestrator.patches.move_patient_encounter_summary_after_payments

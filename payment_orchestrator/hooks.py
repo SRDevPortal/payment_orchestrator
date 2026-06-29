@@ -6,7 +6,6 @@ app_email = "support@example.com"
 app_license = "MIT"
 
 app_include_css = "/assets/payment_orchestrator/css/payment_orchestrator.css"
-app_include_js = "/assets/payment_orchestrator/js/reference_doctypes.js"
 
 fixtures = []
 

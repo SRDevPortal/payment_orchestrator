@@ -7,6 +7,7 @@ from frappe.utils import cint
 
 LINKED_REFERENCE_DOCTYPE = "Payment Intent"
 SALES_INVOICE_PAYMENT_SUMMARY_ANCHOR = "si_support_actions_html"
+PATIENT_ENCOUNTER_PAYMENT_SUMMARY_ANCHOR = "enc_multi_payments"
 
 
 REFERENCE_SUMMARY_FIELDS = {
@@ -17,14 +18,16 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
         {'fieldname': 'po_total_unallocated', 'label': 'Total Unallocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_allocated', 'read_only': 1},
         {'fieldname': 'po_last_payment_intent', 'label': 'Last Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
+        {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
     'Patient Encounter': [
-        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': 'enc_multi_payments'},
+        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': PATIENT_ENCOUNTER_PAYMENT_SUMMARY_ANCHOR},
         {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
         {'fieldname': 'po_total_unallocated', 'label': 'Total Unallocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_allocated', 'read_only': 1},
         {'fieldname': 'po_last_payment_intent', 'label': 'Last Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
+        {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
     'Sales Order': [
         {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': 'payment_schedule'},
@@ -33,6 +36,7 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
         {'fieldname': 'po_total_unallocated', 'label': 'Total Unallocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_allocated', 'read_only': 1},
         {'fieldname': 'po_last_payment_intent', 'label': 'Last Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
+        {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
     'Sales Invoice': [
         {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': SALES_INVOICE_PAYMENT_SUMMARY_ANCHOR},
@@ -41,6 +45,7 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
         {'fieldname': 'po_total_unallocated', 'label': 'Total Unallocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_allocated', 'read_only': 1},
         {'fieldname': 'po_last_payment_intent', 'label': 'Last Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
+        {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
 }
 
@@ -79,15 +84,34 @@ def after_install():
 def sync_reference_field_placement():
     sync_reference_field_labels()
 
+    sync_patient_encounter_field_placement()
+    sync_sales_invoice_field_placement()
+
+
+def sync_patient_encounter_field_placement():
+    if not frappe.db.exists("DocType", "Patient Encounter"):
+        return
+
+    anchor = _patient_encounter_payment_summary_anchor()
+    _sync_reference_fields_for_doctype("Patient Encounter", anchor)
+    frappe.clear_cache(doctype="Patient Encounter")
+
+
+def sync_sales_invoice_field_placement():
     if not frappe.db.exists("DocType", "Sales Invoice"):
         return
 
     anchor = _sales_invoice_payment_summary_anchor()
-    payment_fields = REFERENCE_SUMMARY_FIELDS.get("Sales Invoice", [])
-    anchor_idx = _field_idx("Sales Invoice", anchor) or 0
+    _sync_reference_fields_for_doctype("Sales Invoice", anchor)
+    frappe.clear_cache(doctype="Sales Invoice")
+
+
+def _sync_reference_fields_for_doctype(dt: str, anchor: str):
+    payment_fields = REFERENCE_SUMMARY_FIELDS.get(dt, [])
+    anchor_idx = _field_idx(dt, anchor) or 0
 
     for offset, field in enumerate(payment_fields, 1):
-        custom_field = f"Sales Invoice-{field['fieldname']}"
+        custom_field = f"{dt}-{field['fieldname']}"
         if not frappe.db.exists("Custom Field", custom_field):
             continue
 
@@ -101,8 +125,7 @@ def sync_reference_field_placement():
             updates["insert_after"] = field["insert_after"]
         frappe.db.set_value("Custom Field", custom_field, updates, update_modified=False)
 
-    _sync_sales_invoice_field_order(anchor, [field["fieldname"] for field in payment_fields])
-    frappe.clear_cache(doctype="Sales Invoice")
+    _sync_field_order(dt, anchor, [field["fieldname"] for field in payment_fields])
 
 
 def sync_reference_field_labels():
@@ -130,6 +153,14 @@ def _sales_invoice_payment_summary_anchor() -> str:
     return "payments_tab"
 
 
+def _patient_encounter_payment_summary_anchor() -> str:
+    if frappe.db.exists("Custom Field", f"Patient Encounter-{PATIENT_ENCOUNTER_PAYMENT_SUMMARY_ANCHOR}"):
+        return PATIENT_ENCOUNTER_PAYMENT_SUMMARY_ANCHOR
+    if frappe.db.exists("DocField", {"parent": "Patient Encounter", "fieldname": "clinical_notes"}):
+        return "clinical_notes"
+    return "encounter_details"
+
+
 def _field_idx(dt: str, fieldname: str) -> int:
     custom_idx = frappe.db.get_value("Custom Field", {"dt": dt, "fieldname": fieldname}, "idx")
     if custom_idx is not None:
@@ -139,11 +170,11 @@ def _field_idx(dt: str, fieldname: str) -> int:
     return cint(standard_idx)
 
 
-def _sync_sales_invoice_field_order(anchor: str, payment_fieldnames: list[str]):
+def _sync_field_order(dt: str, anchor: str, payment_fieldnames: list[str]):
     property_setters = frappe.get_all(
         "Property Setter",
         filters={
-            "doc_type": "Sales Invoice",
+            "doc_type": dt,
             "property": "field_order",
         },
         pluck="name",

@@ -26,6 +26,7 @@ payment_orchestrator.payment_summary_fields = [
     'po_total_allocated',
     'po_total_unallocated',
     'po_last_payment_intent',
+    'po_payment_dashboard_html',
 ];
 
 payment_orchestrator.toggle_payment_summary_fields = function(frm, settings) {
@@ -179,6 +180,10 @@ payment_orchestrator.render_dashboard = function(frm) {
                 </div>
             `;
             if (!frm.fields_dict.po_payment_dashboard_html) {
+                const dashboard_wrapper = frm.dashboard && (frm.dashboard.wrapper || frm.dashboard.parent);
+                if (dashboard_wrapper) {
+                    $(dashboard_wrapper).find('.po-dashboard').closest('.form-dashboard-section').remove();
+                }
                 frm.dashboard.add_section(html, __('Payment Summary'));
             } else {
                 frm.fields_dict.po_payment_dashboard_html.$wrapper.html(html);
@@ -415,16 +420,20 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
     }, __('Payment Summary'));
 };
 
-['CRM Lead', 'Patient Encounter', 'Sales Order', 'Sales Invoice'].forEach((doctype) => {
-    frappe.ui.form.on(doctype, {
-        refresh(frm) {
-            payment_orchestrator.get_settings_context((settings) => {
-                payment_orchestrator.toggle_payment_summary_fields(frm, settings);
-                payment_orchestrator.add_request_payment_button(frm, settings);
-                if (settings.show_payment_summary_on_reference_doctypes && payment_orchestrator.is_doctype_enabled(frm, settings)) {
-                    payment_orchestrator.render_dashboard(frm);
-                }
-            });
-        }
+if (!payment_orchestrator.reference_doctype_handlers_bound) {
+    payment_orchestrator.reference_doctype_handlers_bound = true;
+
+    ['CRM Lead', 'Patient Encounter', 'Sales Order', 'Sales Invoice'].forEach((doctype) => {
+        frappe.ui.form.on(doctype, {
+            refresh(frm) {
+                payment_orchestrator.get_settings_context((settings) => {
+                    payment_orchestrator.toggle_payment_summary_fields(frm, settings);
+                    payment_orchestrator.add_request_payment_button(frm, settings);
+                    if (settings.show_payment_summary_on_reference_doctypes && payment_orchestrator.is_doctype_enabled(frm, settings)) {
+                        payment_orchestrator.render_dashboard(frm);
+                    }
+                });
+            }
+        });
     });
-});
+}
