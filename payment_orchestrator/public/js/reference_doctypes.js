@@ -19,6 +19,28 @@ payment_orchestrator.is_doctype_enabled = function(frm, settings) {
     return !!mapping[frm.doctype];
 };
 
+payment_orchestrator.is_saved_doc = function(frm) {
+    const is_new = typeof frm.is_new === 'function' ? frm.is_new() : frm.is_new;
+    return Boolean(frm.doc && frm.doc.name && !is_new);
+};
+
+payment_orchestrator.can_show_payment_actions = function(frm, settings) {
+    if (!payment_orchestrator.is_saved_doc(frm)) return false;
+    if (!settings.show_action_buttons || !payment_orchestrator.is_doctype_enabled(frm, settings)) return false;
+
+    if (frm.doctype === 'Patient Encounter') {
+        return frm.doc.sr_encounter_type === 'Order' && Number(frm.doc.docstatus || 0) === 0;
+    }
+
+    return true;
+};
+
+payment_orchestrator.can_show_payment_dashboard = function(frm, settings) {
+    return payment_orchestrator.is_saved_doc(frm)
+        && settings.show_payment_summary_on_reference_doctypes
+        && payment_orchestrator.is_doctype_enabled(frm, settings);
+};
+
 payment_orchestrator.payment_summary_fields = [
     'po_payment_tab',
     'po_total_requested',
@@ -311,8 +333,7 @@ payment_orchestrator.render_dashboard = function(frm) {
 };
 
 payment_orchestrator.add_request_payment_button = function(frm, settings) {
-    if (frm.is_new && !frm.doc.name) return;
-    if (!settings.show_action_buttons || !payment_orchestrator.is_doctype_enabled(frm, settings)) return;
+    if (!payment_orchestrator.can_show_payment_actions(frm, settings)) return;
 
     if (settings.enable_razorpay_payment_link) {
         frm.add_custom_button(__('Razorpay Payment Link'), function() {
@@ -547,7 +568,7 @@ if (!payment_orchestrator.reference_doctype_handlers_bound) {
                 payment_orchestrator.get_settings_context((settings) => {
                     payment_orchestrator.toggle_payment_summary_fields(frm, settings);
                     payment_orchestrator.add_request_payment_button(frm, settings);
-                    if (settings.show_payment_summary_on_reference_doctypes && payment_orchestrator.is_doctype_enabled(frm, settings)) {
+                    if (payment_orchestrator.can_show_payment_dashboard(frm, settings)) {
                         payment_orchestrator.render_dashboard(frm);
                     }
                 });

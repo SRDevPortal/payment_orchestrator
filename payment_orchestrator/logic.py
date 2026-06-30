@@ -1,5 +1,5 @@
 import frappe
-from frappe.utils import flt, nowdate
+from frappe.utils import flt, getdate, nowdate
 
 from payment_orchestrator.services import (
     build_reference_context,
@@ -18,6 +18,11 @@ def process_provider_payment_success(payload, event_doc=None):
 
     intent = frappe.get_doc('Payment Intent', payment_intent_name)
     if intent.provider_payment_id and intent.provider_payment_id == payment_entity.get('id'):
+        if intent.reference_doctype == 'Patient Encounter':
+            sync_encounter_multi_payment_from_intent(intent)
+            refresh_intent_and_reference(intent)
+            _publish_payment_completion(intent, None, 0)
+            return {'payment_intent': intent.name, 'payment_entry': None, 'duplicate': True}
         existing_pe = _existing_payment_entry(intent)
         if existing_pe:
             _publish_payment_completion(intent, existing_pe, 0)
@@ -45,6 +50,18 @@ def process_provider_payment_success(payload, event_doc=None):
     intent.db_set('amount_unallocated', amount_paid)
     intent.db_set('paid_on', frappe.utils.now_datetime())
     intent.db_set('provider_payload_snapshot', as_json(payload))
+
+    intent.reload()
+    if intent.reference_doctype == 'Patient Encounter':
+        sync_encounter_multi_payment_from_intent(intent)
+        refresh_intent_and_reference(intent)
+        _publish_payment_completion(intent, None, 0)
+        return {
+            'payment_intent': intent.name,
+            'payment_entry': None,
+            'allocated_amount': 0,
+            'status': frappe.db.get_value('Payment Intent', intent.name, 'status'),
+        }
 
     payment_entry_name = create_payment_entry_for_intent(intent)
     allocated_amount = 0
@@ -194,6 +211,79 @@ def refresh_intent_and_reference(intent):
     update_reference_payment_summary(intent.reference_doctype, intent.reference_name)
 
 
+def sync_encounter_multi_payment_from_intent(intent):
+    if intent.reference_doctype != 'Patient Encounter' or not intent.reference_name:
+        return None
+    if not frappe.db.exists('Patient Encounter', intent.reference_name):
+        return None
+
+    encounter = frappe.get_doc('Patient Encounter', intent.reference_name)
+    if not frappe.get_meta('Patient Encounter').get_field('enc_multi_payments'):
+        return None
+
+    row = _find_encounter_payment_row(encounter, intent)
+    paid_on = getdate(intent.paid_on) if intent.paid_on else nowdate()
+    reference_no = _provider_reference_no(intent)
+    values = {
+        'mmp_paid_amount': flt(intent.amount_paid or intent.amount_requested),
+        'mmp_mode_of_payment': _resolve_mode_of_payment(intent, get_settings()),
+        'mmp_reference_no': reference_no,
+        'mmp_reference_date': paid_on,
+        'mmp_payment_intent': intent.name,
+        'mmp_provider_payment_id': intent.provider_payment_id or reference_no,
+        'mmp_gateway': intent.gateway,
+        'mmp_payment_mode': intent.payment_mode,
+        'mmp_orchestrator_status': 'Paid',
+    }
+    values = _filter_values_for_doctype('SR Multi Mode Payment', values)
+
+    if row is not None:
+        frappe.db.set_value('SR Multi Mode Payment', row.name, values, update_modified=False)
+        return row.name
+
+    next_idx = max([flt(getattr(item, 'idx', 0)) for item in getattr(encounter, 'enc_multi_payments', []) or []] or [0]) + 1
+    row = frappe.get_doc({
+        'doctype': 'SR Multi Mode Payment',
+        'parent': encounter.name,
+        'parenttype': 'Patient Encounter',
+        'parentfield': 'enc_multi_payments',
+        'idx': next_idx,
+        **values,
+    })
+    row.insert(ignore_permissions=True)
+    frappe.db.set_value('Patient Encounter', encounter.name, 'modified', frappe.utils.now(), update_modified=False)
+    return row.name
+
+
+def link_encounter_billing_result(payment_intent, sales_invoice=None, payment_entry=None, allocated_amount=0):
+    if not payment_intent or not frappe.db.exists('Payment Intent', payment_intent):
+        return None
+
+    intent = frappe.get_doc('Payment Intent', payment_intent)
+    updates = {}
+    meta = frappe.get_meta('Payment Intent')
+    if sales_invoice and meta.get_field('sales_invoice'):
+        updates['sales_invoice'] = sales_invoice
+    if payment_entry and meta.get_field('payment_entry'):
+        updates['payment_entry'] = payment_entry
+    if updates:
+        frappe.db.set_value('Payment Intent', intent.name, updates, update_modified=False)
+
+    alloc_amount = flt(allocated_amount or intent.amount_paid or 0)
+    if sales_invoice and payment_entry and alloc_amount > 0:
+        _upsert_payment_allocation(intent.name, payment_entry, sales_invoice, alloc_amount)
+
+    intent.reload()
+    refresh_intent_and_reference(intent)
+    return {
+        'payment_intent': intent.name,
+        'sales_invoice': sales_invoice,
+        'payment_entry': payment_entry,
+        'allocated_amount': alloc_amount,
+        'status': frappe.db.get_value('Payment Intent', intent.name, 'status'),
+    }
+
+
 def _existing_payment_entry(intent):
     keys = [k for k in [intent.provider_payment_id, intent.name] if k]
     if not keys:
@@ -288,6 +378,78 @@ def _allocation_exists(payment_intent, target_doctype, target_name):
         'target_name': target_name,
         'status': ['!=', 'Reversed'],
     })
+
+
+def _find_encounter_payment_row(encounter, intent):
+    reference_no = _provider_reference_no(intent)
+    for row in getattr(encounter, 'enc_multi_payments', []) or []:
+        if getattr(row, 'mmp_payment_intent', None) == intent.name:
+            return row
+        if intent.provider_payment_id and getattr(row, 'mmp_provider_payment_id', None) == intent.provider_payment_id:
+            return row
+        if reference_no and getattr(row, 'mmp_reference_no', None) == reference_no:
+            return row
+    return None
+
+
+def _provider_reference_no(intent):
+    return (
+        intent.provider_payment_id
+        or intent.provider_order_id
+        or intent.provider_pos_request_id
+        or intent.provider_qr_id
+        or intent.provider_link_id
+        or intent.name
+    )
+
+
+def _set_child_values_if_present(row, child_doctype, values):
+    meta = frappe.get_meta(child_doctype)
+    for fieldname, value in values.items():
+        if meta.get_field(fieldname):
+            setattr(row, fieldname, value)
+
+
+def _filter_values_for_doctype(doctype, values):
+    meta = frappe.get_meta(doctype)
+    return {
+        fieldname: value
+        for fieldname, value in values.items()
+        if meta.get_field(fieldname)
+    }
+
+
+def _upsert_payment_allocation(payment_intent, payment_entry, sales_invoice, allocated_amount):
+    existing = frappe.db.get_value('Payment Allocation', {
+        'payment_intent': payment_intent,
+        'target_doctype': 'Sales Invoice',
+        'target_name': sales_invoice,
+        'status': ['!=', 'Reversed'],
+    }, 'name')
+    values = {
+        'payment_entry': payment_entry,
+        'allocated_amount': allocated_amount,
+        'status': 'Allocated',
+        'allocation_date': frappe.utils.now_datetime(),
+        'remarks': 'Linked from Patient Encounter billing',
+    }
+    if existing:
+        frappe.db.set_value('Payment Allocation', existing, values, update_modified=False)
+        return existing
+
+    allocation = frappe.get_doc({
+        'doctype': 'Payment Allocation',
+        'status': 'Allocated',
+        'payment_intent': payment_intent,
+        'payment_entry': payment_entry,
+        'allocated_amount': allocated_amount,
+        'target_doctype': 'Sales Invoice',
+        'target_name': sales_invoice,
+        'allocation_date': frappe.utils.now_datetime(),
+        'remarks': 'Linked from Patient Encounter billing',
+    })
+    allocation.insert(ignore_permissions=True)
+    return allocation.name
 
 
 def _extract_payment_entity(payload):

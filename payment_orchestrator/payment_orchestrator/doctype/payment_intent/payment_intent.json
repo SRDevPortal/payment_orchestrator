@@ -39,6 +39,7 @@
     "encounter",
     "sales_order",
     "sales_invoice",
+    "payment_entry",
     "section_provider",
     "provider_request_id",
     "provider_link_id",
@@ -100,6 +101,7 @@
     {"fieldname": "encounter", "fieldtype": "Link", "label": "Patient Encounter", "options": "Patient Encounter"},
     {"fieldname": "sales_order", "fieldtype": "Link", "label": "Sales Order", "options": "Sales Order"},
     {"fieldname": "sales_invoice", "fieldtype": "Link", "label": "Sales Invoice", "options": "Sales Invoice"},
+    {"fieldname": "payment_entry", "fieldtype": "Link", "label": "Payment Entry", "options": "Payment Entry"},
 
     {"fieldname": "section_provider", "fieldtype": "Section Break", "label": "Provider Objects"},
     {"fieldname": "provider_request_id", "fieldtype": "Data", "label": "Provider Request ID"},
