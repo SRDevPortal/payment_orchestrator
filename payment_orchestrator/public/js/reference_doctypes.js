@@ -32,13 +32,92 @@ payment_orchestrator.can_show_payment_actions = function(frm, settings) {
         return frm.doc.sr_encounter_type === 'Order' && Number(frm.doc.docstatus || 0) === 0;
     }
 
+    if (frm.doctype === 'Sales Invoice') {
+        return Number(frm.doc.docstatus || 0) === 1 && parseFloat(frm.doc.outstanding_amount || 0) > 0;
+    }
+
+    if (frm.doctype === 'Sales Order') {
+        return Number(frm.doc.docstatus || 0) < 2 && parseFloat(frm.doc.grand_total || frm.doc.base_grand_total || 0) > 0;
+    }
+
     return true;
+};
+
+payment_orchestrator.is_patient_encounter_collectible = function(frm) {
+    return frm.doctype === 'Patient Encounter'
+        && frm.doc.sr_encounter_type === 'Order'
+        && Number(frm.doc.docstatus || 0) === 0;
+};
+
+payment_orchestrator.is_sales_invoice_collectible = function(frm) {
+    return frm.doctype === 'Sales Invoice'
+        && Number(frm.doc.docstatus || 0) === 1
+        && parseFloat(frm.doc.outstanding_amount || 0) > 0;
+};
+
+payment_orchestrator.is_sales_order_collectible = function(frm) {
+    return frm.doctype === 'Sales Order'
+        && Number(frm.doc.docstatus || 0) < 2
+        && parseFloat(frm.doc.grand_total || frm.doc.base_grand_total || 0) > 0;
+};
+
+payment_orchestrator.is_crm_lead_collectible = function(frm) {
+    return frm.doctype === 'CRM Lead';
+};
+
+payment_orchestrator.can_collect_payment = function(frm, settings) {
+    if (!payment_orchestrator.can_show_payment_actions(frm, settings)) return false;
+    return payment_orchestrator.is_patient_encounter_collectible(frm)
+        || payment_orchestrator.is_sales_invoice_collectible(frm)
+        || payment_orchestrator.is_sales_order_collectible(frm)
+        || payment_orchestrator.is_crm_lead_collectible(frm);
+};
+
+payment_orchestrator.can_show_payment_link_action = function(frm, settings) {
+    return payment_orchestrator.can_collect_payment(frm, settings);
+};
+
+payment_orchestrator.can_show_qr_code_action = function(frm, settings) {
+    if (!payment_orchestrator.can_collect_payment(frm, settings)) return false;
+    return ['Patient Encounter', 'Sales Order', 'Sales Invoice'].includes(frm.doctype);
+};
+
+payment_orchestrator.can_show_pinelabs_pos_action = function(frm, settings) {
+    return Boolean(settings.enable_pinelabs_pos)
+        && payment_orchestrator.is_sales_invoice_collectible(frm);
+};
+
+payment_orchestrator.can_show_pinelabs_pos_demo_action = function(frm, settings) {
+    return Boolean(settings.enable_pinelabs_pos)
+        && String(settings.pinelabs_pos_mode || 'Test') !== 'Live'
+        && (
+            payment_orchestrator.is_patient_encounter_collectible(frm)
+            || payment_orchestrator.is_sales_invoice_collectible(frm)
+        );
 };
 
 payment_orchestrator.can_show_payment_dashboard = function(frm, settings) {
     return payment_orchestrator.is_saved_doc(frm)
         && settings.show_payment_summary_on_reference_doctypes
         && payment_orchestrator.is_doctype_enabled(frm, settings);
+};
+
+payment_orchestrator.has_payment_summary_history = function(frm) {
+    if (!frm.doc) return false;
+    return Boolean(
+        frm.doc.po_last_payment_intent
+        || parseFloat(frm.doc.po_total_requested || 0) > 0
+        || parseFloat(frm.doc.po_total_paid || 0) > 0
+        || parseFloat(frm.doc.po_total_allocated || 0) > 0
+        || parseFloat(frm.doc.po_total_unallocated || 0) > 0
+    );
+};
+
+payment_orchestrator.can_show_refresh_payment_summary = function(frm, settings) {
+    return payment_orchestrator.is_saved_doc(frm)
+        && payment_orchestrator.is_doctype_enabled(frm, settings)
+        && Boolean(frm.fields_dict.po_last_payment_intent || frm.fields_dict.po_payment_dashboard_html)
+        && payment_orchestrator.has_payment_summary_history(frm);
 };
 
 payment_orchestrator.payment_summary_fields = [
@@ -219,6 +298,8 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
     const dialog = opts.dialog;
     const frm = opts.frm;
     const timeout_ms = opts.timeout_ms || 10 * 60 * 1000;
+    const provider_poll_ms = opts.provider_poll_ms || 15 * 1000;
+    let last_provider_fetch = 0;
 
     payment_orchestrator.stop_payment_watcher(payment_intent);
 
@@ -252,6 +333,12 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
                     complete(intent);
                     return;
                 }
+                const now = Date.now();
+                if (now - last_provider_fetch < provider_poll_ms) {
+                    return;
+                }
+                last_provider_fetch = now;
+
                 if (
                     intent.payment_mode === 'Payment Link'
                     && intent.provider_link_id
@@ -265,6 +352,21 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
                             if (result.payment_intent || (fetch_response.message || {}).processed) {
                                 poll();
                             }
+                        },
+                        error() {
+                            // Keep the UI watcher alive; webhook/callback may still update the intent.
+                        }
+                    });
+                } else if (
+                    intent.payment_mode === 'QR Code'
+                    && intent.provider_qr_id
+                    && intent.gateway === 'Razorpay'
+                ) {
+                    frappe.call({
+                        method: 'payment_orchestrator.api.provider.fetch_qr_code',
+                        args: { payment_intent },
+                        callback() {
+                            poll();
                         },
                         error() {
                             // Keep the UI watcher alive; webhook/callback may still update the intent.
@@ -333,9 +435,10 @@ payment_orchestrator.render_dashboard = function(frm) {
 };
 
 payment_orchestrator.add_request_payment_button = function(frm, settings) {
-    if (!payment_orchestrator.can_show_payment_actions(frm, settings)) return;
+    if (!payment_orchestrator.can_collect_payment(frm, settings)) return;
+    const payment_action_group = __('Payment Actions');
 
-    if (settings.enable_razorpay_payment_link) {
+    if (settings.enable_razorpay_payment_link && payment_orchestrator.can_show_payment_link_action(frm, settings)) {
         frm.add_custom_button(__('Razorpay Payment Link'), function() {
         const default_amount = frm.doc.outstanding_amount || frm.doc.grand_total || frm.doc.base_grand_total || frm.doc.paid_amount || 0;
         const dialog = new frappe.ui.Dialog({
@@ -378,10 +481,10 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
             }
         });
         dialog.show();
-        }, __('Payment Summary'));
+        }, payment_action_group);
     }
 
-    if (settings.enable_razorpay_qr_code && ['Patient Encounter', 'Sales Order', 'Sales Invoice'].includes(frm.doctype)) {
+    if (settings.enable_razorpay_qr_code && payment_orchestrator.can_show_qr_code_action(frm, settings)) {
         frm.add_custom_button(__('Razorpay QR Code'), function() {
             const default_amount = frm.doc.outstanding_amount || frm.doc.grand_total || frm.doc.base_grand_total || frm.doc.paid_amount || 0;
             const dialog = new frappe.ui.Dialog({
@@ -424,10 +527,10 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                 }
             });
             dialog.show();
-        }, __('Payment Summary'));
+        }, payment_action_group);
     }
 
-    if (settings.enable_pinelabs_payment_link) {
+    if (settings.enable_pinelabs_payment_link && payment_orchestrator.can_show_payment_link_action(frm, settings)) {
         frm.add_custom_button(__('Pine Labs Payment Link'), function() {
             const default_amount = frm.doc.outstanding_amount || frm.doc.grand_total || frm.doc.base_grand_total || frm.doc.paid_amount || 0;
             const dialog = new frappe.ui.Dialog({
@@ -471,10 +574,10 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                 }
             });
             dialog.show();
-        }, __('Payment Summary'));
+        }, payment_action_group);
     }
 
-    if (settings.enable_pinelabs_pos && frm.doctype === 'Sales Invoice' && frm.doc.docstatus === 1) {
+    if (payment_orchestrator.can_show_pinelabs_pos_action(frm, settings)) {
         frm.add_custom_button(__('Pine Labs POS'), function() {
             const default_amount = frm.doc.outstanding_amount || frm.doc.grand_total || 0;
             const dialog = new frappe.ui.Dialog({
@@ -508,10 +611,10 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                 }
             });
             dialog.show();
-        }, __('Payment Summary'));
+        }, payment_action_group);
     }
 
-    if (settings.enable_pinelabs_pos && ['Patient Encounter', 'Sales Invoice'].includes(frm.doctype)) {
+    if (payment_orchestrator.can_show_pinelabs_pos_demo_action(frm, settings)) {
         frm.add_custom_button(__('Pine Labs POS (Demo)'), function() {
             const default_amount = frm.doc.outstanding_amount || frm.doc.grand_total || frm.doc.base_grand_total || frm.doc.paid_amount || 0;
             const dialog = new frappe.ui.Dialog({
@@ -546,16 +649,19 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                 }
             });
             dialog.show();
-        }, __('Payment Summary'));
+        }, payment_action_group);
     }
+};
 
+payment_orchestrator.add_refresh_payment_summary_button = function(frm, settings) {
+    if (!payment_orchestrator.can_show_refresh_payment_summary(frm, settings)) return;
     frm.add_custom_button(__('Refresh Payment Summary'), function() {
         frappe.call({
             method: 'payment_orchestrator.api.allocations.sync_reference_summary',
             args: { reference_doctype: frm.doctype, reference_name: frm.doc.name },
             callback() { frm.reload_doc(); }
         });
-    }, __('Payment Summary'));
+    }, __('Payment Actions'));
 };
 
 if (!payment_orchestrator.reference_doctype_handlers_bound) {
@@ -568,6 +674,7 @@ if (!payment_orchestrator.reference_doctype_handlers_bound) {
                 payment_orchestrator.get_settings_context((settings) => {
                     payment_orchestrator.toggle_payment_summary_fields(frm, settings);
                     payment_orchestrator.add_request_payment_button(frm, settings);
+                    payment_orchestrator.add_refresh_payment_summary_button(frm, settings);
                     if (payment_orchestrator.can_show_payment_dashboard(frm, settings)) {
                         payment_orchestrator.render_dashboard(frm);
                     }

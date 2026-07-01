@@ -211,6 +211,41 @@ def refresh_intent_and_reference(intent):
     update_reference_payment_summary(intent.reference_doctype, intent.reference_name)
 
 
+def apply_unpaid_terminal_provider_status(intent, provider_status=None, provider_payload=None):
+    if flt(getattr(intent, 'amount_paid', 0) or 0) > 0:
+        return None
+
+    status = (provider_status or '').strip().lower()
+    mapped_status = None
+    if status in {'closed', 'expired'}:
+        mapped_status = 'Expired'
+    elif status in {'cancelled', 'canceled', 'failed'}:
+        mapped_status = 'Cancelled'
+
+    if not mapped_status:
+        return None
+
+    updates = {
+        'status': mapped_status,
+        'payment_status': provider_status,
+        'amount_paid': 0,
+        'amount_allocated': 0,
+        'amount_unallocated': 0,
+        'allocation_status': 'Unallocated',
+        'last_synced_on': frappe.utils.now_datetime(),
+    }
+    if provider_payload is not None:
+        updates['provider_payload_snapshot'] = as_json(provider_payload)
+    if getattr(intent, 'payment_mode', None) == 'QR Code':
+        updates['qr_status'] = provider_status
+
+    frappe.db.set_value('Payment Intent', intent.name, updates, update_modified=False)
+    update_reference_payment_summary(intent.reference_doctype, intent.reference_name)
+    if getattr(intent, 'sales_invoice', None):
+        update_reference_payment_summary('Sales Invoice', intent.sales_invoice)
+    return mapped_status
+
+
 def sync_encounter_multi_payment_from_intent(intent):
     if intent.reference_doctype != 'Patient Encounter' or not intent.reference_name:
         return None
@@ -275,6 +310,8 @@ def link_encounter_billing_result(payment_intent, sales_invoice=None, payment_en
 
     intent.reload()
     refresh_intent_and_reference(intent)
+    if sales_invoice:
+        update_reference_payment_summary('Sales Invoice', sales_invoice)
     return {
         'payment_intent': intent.name,
         'sales_invoice': sales_invoice,

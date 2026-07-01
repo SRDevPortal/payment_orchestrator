@@ -10,13 +10,19 @@ def get_reference_dashboard(reference_doctype, reference_name):
         frappe.throw(f'Payment Orchestrator is disabled for {reference_doctype}')
 
     summary = update_reference_payment_summary(reference_doctype, reference_name)
-    intents = frappe.get_all(
-        'Payment Intent',
-        filters={'reference_doctype': reference_doctype, 'reference_name': reference_name},
-        fields=['name', 'status', 'gateway', 'payment_mode', 'request_type', 'amount_requested', 'amount_paid', 'amount_allocated', 'amount_unallocated', 'payment_link_url', 'qr_code_url', 'provider_payment_id', 'modified'],
-        order_by='modified desc',
-        limit=20,
-    )
+    query_args = {
+        'fields': ['name', 'status', 'gateway', 'payment_mode', 'request_type', 'amount_requested', 'amount_paid', 'amount_allocated', 'amount_unallocated', 'payment_link_url', 'qr_code_url', 'provider_payment_id', 'modified'],
+        'order_by': 'modified desc',
+        'limit': 20,
+    }
+    if reference_doctype == 'Sales Invoice':
+        query_args['or_filters'] = [
+            {'reference_doctype': reference_doctype, 'reference_name': reference_name},
+            {'sales_invoice': reference_name},
+        ]
+    else:
+        query_args['filters'] = {'reference_doctype': reference_doctype, 'reference_name': reference_name}
+    intents = frappe.get_all('Payment Intent', **query_args)
     return {
         'summary': summary,
         'intents': intents,

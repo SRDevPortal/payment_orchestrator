@@ -181,16 +181,18 @@ def update_reference_payment_summary(reference_doctype: str, reference_name: str
             'total_unallocated': 0,
         }
 
+    where_clause, values = _payment_intent_reference_where(reference_doctype, reference_name)
+
     total_requested = frappe.db.sql(
-        """
+        f"""
         select coalesce(sum(amount_requested), 0) as total_requested,
                coalesce(sum(amount_paid), 0) as total_paid,
                coalesce(sum(amount_allocated), 0) as total_allocated,
                coalesce(sum(amount_unallocated), 0) as total_unallocated
         from `tabPayment Intent`
-        where reference_doctype=%s and reference_name=%s
+        where {where_clause}
         """,
-        (reference_doctype, reference_name),
+        values,
         as_dict=True,
     )[0]
 
@@ -205,7 +207,18 @@ def update_reference_payment_summary(reference_doctype: str, reference_name: str
     if meta.get_field('po_total_unallocated'):
         updates['po_total_unallocated'] = total_requested.total_unallocated
     if meta.get_field('po_last_payment_intent'):
-        latest = frappe.db.get_value('Payment Intent', {'reference_doctype': reference_doctype, 'reference_name': reference_name}, 'name', order_by='modified desc')
+        latest = frappe.db.sql(
+            f"""
+            select name
+            from `tabPayment Intent`
+            where {where_clause}
+            order by modified desc
+            limit 1
+            """,
+            values,
+            as_dict=True,
+        )
+        latest = latest[0].name if latest else None
         updates['po_last_payment_intent'] = latest
 
     if updates:
@@ -226,6 +239,18 @@ def _update_reference_summary(reference_doctype: str, reference_name: str):
     settings = get_settings()
     if cint(settings.enable_payment_summary_sync) and is_doctype_enabled(reference_doctype):
         update_reference_payment_summary(reference_doctype, reference_name)
+
+
+def _payment_intent_reference_where(reference_doctype: str, reference_name: str):
+    if reference_doctype == 'Sales Invoice':
+        return (
+            "((reference_doctype=%s and reference_name=%s) or sales_invoice=%s)",
+            (reference_doctype, reference_name, reference_name),
+        )
+    return (
+        "(reference_doctype=%s and reference_name=%s)",
+        (reference_doctype, reference_name),
+    )
 
 
 def _first_value(doc, fieldnames):

@@ -2,7 +2,7 @@ import hashlib
 
 import frappe
 
-from payment_orchestrator.logic import process_provider_payment_success
+from payment_orchestrator.logic import apply_unpaid_terminal_provider_status, process_provider_payment_success
 from payment_orchestrator.provider.pinelabs.online import PineLabsOnlineClient
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
 from payment_orchestrator.utils import get_settings
@@ -50,8 +50,9 @@ def fetch_payment_link(payment_intent):
 
     client = RazorpayClient(settings=settings, mode=intent.provider_mode or 'Test')
     data = client.fetch_payment_link(intent.provider_link_id)
-    intent.db_set('payment_status', data.get('status'))
-    intent.db_set('provider_payload_snapshot', frappe.as_json(data))
+    if not apply_unpaid_terminal_provider_status(intent, data.get('status'), data):
+        intent.db_set('payment_status', data.get('status'))
+        intent.db_set('provider_payload_snapshot', frappe.as_json(data))
     return data
 
 
@@ -159,9 +160,10 @@ def fetch_qr_code(payment_intent):
         frappe.throw('Payment Intent has no provider QR code id')
     client = RazorpayClient(settings=get_settings(), mode=intent.provider_mode or 'Test')
     data = client.fetch_qr_code(intent.provider_qr_id)
-    intent.db_set('qr_status', data.get('status'))
-    intent.db_set('payment_status', data.get('status'))
-    intent.db_set('provider_payload_snapshot', frappe.as_json(data))
+    if not apply_unpaid_terminal_provider_status(intent, data.get('status'), data):
+        intent.db_set('qr_status', data.get('status'))
+        intent.db_set('payment_status', data.get('status'))
+        intent.db_set('provider_payload_snapshot', frappe.as_json(data))
     return data
 
 
@@ -172,9 +174,10 @@ def close_qr_code(payment_intent):
         frappe.throw('Payment Intent has no provider QR code id')
     client = RazorpayClient(settings=get_settings(), mode=intent.provider_mode or 'Test')
     data = client.close_qr_code(intent.provider_qr_id)
-    intent.db_set('qr_status', data.get('status'))
-    intent.db_set('payment_status', data.get('status'))
-    intent.db_set('provider_payload_snapshot', frappe.as_json(data))
+    if not apply_unpaid_terminal_provider_status(intent, data.get('status'), data):
+        intent.db_set('qr_status', data.get('status'))
+        intent.db_set('payment_status', data.get('status'))
+        intent.db_set('provider_payload_snapshot', frappe.as_json(data))
     return data
 
 

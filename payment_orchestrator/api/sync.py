@@ -2,7 +2,11 @@ import frappe
 from frappe.utils import cint, now_datetime
 
 from payment_orchestrator.api.provider import fetch_payment_link
-from payment_orchestrator.logic import allocate_available_amount, refresh_intent_and_reference
+from payment_orchestrator.logic import (
+    allocate_available_amount,
+    apply_unpaid_terminal_provider_status,
+    refresh_intent_and_reference,
+)
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
 from payment_orchestrator.utils import get_settings
 
@@ -26,9 +30,10 @@ def run_periodic_sync():
             if row.provider_qr_id:
                 client = RazorpayClient(settings=settings, mode=intent.provider_mode or 'Test')
                 data = client.fetch_qr_code(row.provider_qr_id)
-                intent.db_set('qr_status', data.get('status'))
-                intent.db_set('payment_status', data.get('status'))
-                intent.db_set('last_synced_on', now_datetime())
+                if not apply_unpaid_terminal_provider_status(intent, data.get('status'), data):
+                    intent.db_set('qr_status', data.get('status'))
+                    intent.db_set('payment_status', data.get('status'))
+                    intent.db_set('last_synced_on', now_datetime())
             payment_entry = frappe.db.get_value('Payment Entry', {'reference_no': ['in', [intent.provider_payment_id, intent.name]]}, 'name')
             if payment_entry and cint(settings.enable_auto_allocation):
                 allocate_available_amount(intent, payment_entry)

@@ -1,0 +1,53 @@
+{
+  "doctype": "DocType",
+  "name": "Payment Intent Correction Log",
+  "module": "Payment Orchestrator",
+  "custom": 0,
+  "istable": 0,
+  "track_changes": 1,
+  "engine": "InnoDB",
+  "autoname": "hash",
+  "field_order": [
+    "payment_intent",
+    "correction_type",
+    "status",
+    "reason",
+    "column_break_reference",
+    "sales_invoice",
+    "payment_entry",
+    "force",
+    "before_json",
+    "after_json",
+    "error_message"
+  ],
+  "fields": [
+    {"fieldname": "payment_intent", "fieldtype": "Link", "label": "Payment Intent", "options": "Payment Intent", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "correction_type", "fieldtype": "Data", "label": "Correction Type", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Applied\nFailed", "default": "Applied", "in_list_view": 1},
+    {"fieldname": "reason", "fieldtype": "Small Text", "label": "Reason", "reqd": 1},
+    {"fieldname": "column_break_reference", "fieldtype": "Column Break"},
+    {"fieldname": "sales_invoice", "fieldtype": "Link", "label": "Sales Invoice", "options": "Sales Invoice"},
+    {"fieldname": "payment_entry", "fieldtype": "Link", "label": "Payment Entry", "options": "Payment Entry"},
+    {"fieldname": "force", "fieldtype": "Check", "label": "Force"},
+    {"fieldname": "before_json", "fieldtype": "Long Text", "label": "Before JSON", "read_only": 1},
+    {"fieldname": "after_json", "fieldtype": "Long Text", "label": "After JSON", "read_only": 1},
+    {"fieldname": "error_message", "fieldtype": "Long Text", "label": "Error Message", "read_only": 1}
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 0,
+      "create": 0,
+      "delete": 0,
+      "submit": 0,
+      "cancel": 0,
+      "amend": 0,
+      "report": 1,
+      "export": 1,
+      "share": 0,
+      "print": 1,
+      "email": 0
+    }
+  ]
+}
