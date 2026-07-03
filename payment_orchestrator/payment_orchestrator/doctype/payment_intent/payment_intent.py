@@ -8,6 +8,7 @@ FINAL_STATUSES = {
     "Allocated",
     "Refunded",
     "Cancelled",
+    "Expired",
 }
 
 

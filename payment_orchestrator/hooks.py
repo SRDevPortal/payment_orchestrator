@@ -18,6 +18,10 @@ doctype_js = {
     "Sales Invoice": "public/js/reference_doctypes.js",
 }
 
+doctype_list_js = {
+    "Payment Intent": "public/js/payment_intent_list.js",
+}
+
 scheduler_events = {
     "daily": [
         "payment_orchestrator.payment_orchestrator.doctype.payment_orchestrator_settings.payment_orchestrator_settings.ensure_single"

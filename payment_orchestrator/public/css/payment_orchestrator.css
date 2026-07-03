@@ -1,3 +1,274 @@
 .po-dashboard .metric-label { color: #777; font-size: 11px; }
 .po-dashboard .metric-value { font-size: 18px; font-weight: 600; }
 .payment-orchestrator-settings-layout .card { border: 1px solid #e5e7eb; border-radius: 12px; background: #fff; }
+
+.po-intent-overview {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fff;
+    padding: 14px;
+}
+
+.po-intent-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+
+.po-intent-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #111827;
+}
+
+.po-intent-subtitle {
+    margin-top: 2px;
+    color: #6b7280;
+    font-size: 12px;
+}
+
+.po-badge-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.po-intent-status-row {
+    margin-top: 12px;
+}
+
+.po-status-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    max-width: 100%;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.po-status-success {
+    color: #065f46;
+    background: #d1fae5;
+    border-color: #a7f3d0;
+}
+
+.po-status-info,
+.po-status-info-soft {
+    color: #1d4ed8;
+    background: #dbeafe;
+    border-color: #bfdbfe;
+}
+
+.po-status-pending {
+    color: #334155;
+    background: #e2e8f0;
+    border-color: #cbd5e1;
+}
+
+.po-status-warning {
+    color: #92400e;
+    background: #fef3c7;
+    border-color: #fde68a;
+}
+
+.po-status-danger {
+    color: #991b1b;
+    background: #fee2e2;
+    border-color: #fecaca;
+}
+
+.po-status-danger-soft {
+    color: #9f1239;
+    background: #ffe4e6;
+    border-color: #fecdd3;
+}
+
+.po-status-neutral {
+    color: #374151;
+    background: #f3f4f6;
+    border-color: #e5e7eb;
+}
+
+.po-status-pine {
+    color: #155e75;
+    background: #cffafe;
+    border-color: #a5f3fc;
+}
+
+.po-status-razorpay {
+    color: #1e3a8a;
+    background: #dbeafe;
+    border-color: #bfdbfe;
+}
+
+.po-intent-alert {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.po-intent-alert-danger {
+    color: #7f1d1d;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+}
+
+.po-intent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.po-intent-metric {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 10px;
+    background: #f9fafb;
+}
+
+.po-intent-metric-label {
+    color: #6b7280;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.po-intent-metric-value {
+    margin-top: 3px;
+    color: #111827;
+    font-size: 16px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.po-intent-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.po-intent-link {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    padding: 7px 9px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fff;
+    color: #1f2937;
+    text-decoration: none;
+    max-width: 100%;
+}
+
+.po-intent-link span {
+    color: #6b7280;
+    font-size: 11px;
+}
+
+.po-intent-link b {
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.po-intent-panel {
+    margin-top: 14px;
+    border-top: 1px solid #e5e7eb;
+    padding-top: 12px;
+}
+
+.po-intent-panel-title {
+    color: #111827;
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.po-intent-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+}
+
+.po-intent-detail {
+    min-width: 0;
+    padding: 8px;
+    border-radius: 8px;
+    background: #f9fafb;
+}
+
+.po-intent-detail span {
+    display: block;
+    color: #6b7280;
+    font-size: 11px;
+}
+
+.po-intent-detail b {
+    display: block;
+    margin-top: 2px;
+    color: #111827;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.po-list-gateway,
+.po-list-status {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    min-height: 22px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.po-list-gateway-pine_labs {
+    color: #155e75;
+    background: #cffafe;
+}
+
+.po-list-gateway-razorpay {
+    color: #1e3a8a;
+    background: #dbeafe;
+}
+
+.po-list-status-success {
+    color: #065f46;
+    background: #d1fae5;
+}
+
+.po-list-status-danger {
+    color: #991b1b;
+    background: #fee2e2;
+}
+
+.po-list-status-pending {
+    color: #854d0e;
+    background: #fef9c3;
+}
+
+.po-list-status-warning {
+    color: #92400e;
+    background: #fef3c7;
+}
+
+.po-list-status-neutral {
+    color: #374151;
+    background: #f3f4f6;
+}

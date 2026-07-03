@@ -191,10 +191,11 @@ def refresh_intent_and_reference(intent):
     amount_paid = flt(intent.amount_paid or 0)
     unallocated = max(amount_paid - allocated_total, 0)
 
+    current_status = frappe.db.get_value('Payment Intent', intent.name, 'status') or intent.status
     status = 'Paid'
     allocation_status = 'Unallocated'
     if amount_paid <= 0:
-        status = 'Requested'
+        status = current_status if current_status in {'Expired', 'Cancelled'} else 'Requested'
     elif allocated_total > 0 and unallocated <= 0:
         status = 'Allocated'
         allocation_status = 'Fully Allocated'

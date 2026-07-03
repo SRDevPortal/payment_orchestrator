@@ -150,11 +150,16 @@ function payment_orchestrator_settings_apply_visibility(frm) {
 
     [
         'pinelabs_merchant_id',
+        'pinelabs_merchant_name',
         'pinelabs_security_token',
         'pinelabs_store_id',
+        'pinelabs_store_name',
         'pinelabs_client_id',
+        'pinelabs_device_no',
         'pinelabs_user_id',
         'pinelabs_allowed_payment_mode',
+        'pinelabs_card_payment_mode_code',
+        'pinelabs_upi_qr_payment_mode_code',
         'pinelabs_auto_cancel_duration',
         'default_pos_device_id',
         'pos_mode_of_payment',

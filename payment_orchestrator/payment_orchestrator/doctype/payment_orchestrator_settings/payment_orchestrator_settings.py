@@ -6,6 +6,7 @@ from frappe.utils.password import remove_encrypted_password
 
 RAZORPAY_API_BASE_URL = "https://api.razorpay.com/v1"
 PINELABS_BASE_URL = "https://www.plutuscloudserviceuat.in:8201"
+PINELABS_PRODUCTION_BASE_URL = "https://www.plutuscloudservice.in:8201"
 PINELABS_UPLOAD_PATH = "/API/CloudBasedIntegration/V1/UploadBilledTransaction"
 PINELABS_STATUS_PATH = "/API/CloudBasedIntegration/V1/GetCloudBasedTxnStatus"
 PINELABS_CANCEL_PATH = "/API/CloudBasedIntegration/V1/CancelTransaction"
@@ -31,6 +32,8 @@ class PaymentOrchestratorSettings(Document):
 		self.enable_pinelabs_postback_processing = 1 if self.enable_pinelabs_postback_processing is None else self.enable_pinelabs_postback_processing
 		self.pinelabs_pos_mode = self.pinelabs_pos_mode or "Test"
 		self.pinelabs_payment_link_mode = self.pinelabs_payment_link_mode or "Test"
+		if cint(self.enable_razorpay_pos) or cint(self.enable_pinelabs_pos):
+			self.enable_pos_payments = 1
 		self.pinelabs_payment_link_after_payment_display = self.pinelabs_payment_link_after_payment_display or PINELABS_PAYMENT_LINK_DEFAULT_DISPLAY
 		if not self.api_base_url or "api.payment_orchestrator.com" in self.api_base_url:
 			self.api_base_url = RAZORPAY_API_BASE_URL
@@ -44,7 +47,7 @@ class PaymentOrchestratorSettings(Document):
 			self.pinelabs_client_id = self.default_pos_device_id
 		elif self.pinelabs_client_id:
 			self.default_pos_device_id = self.pinelabs_client_id
-		self.pinelabs_base_url = (self.pinelabs_base_url or PINELABS_BASE_URL).rstrip("/")
+		self.set_pinelabs_pos_base_url()
 		self.pinelabs_upload_path = self.pinelabs_upload_path or PINELABS_UPLOAD_PATH
 		self.pinelabs_status_path = self.pinelabs_status_path or PINELABS_STATUS_PATH
 		self.pinelabs_cancel_path = self.pinelabs_cancel_path or PINELABS_CANCEL_PATH
@@ -53,6 +56,7 @@ class PaymentOrchestratorSettings(Document):
 		self.pinelabs_payment_link_path = self.pinelabs_payment_link_path or PINELABS_PAYMENT_LINK_PATH
 		self.pinelabs_payment_link_allowed_methods = self.pinelabs_payment_link_allowed_methods or "CARD,UPI"
 		self.pinelabs_allowed_payment_mode = self.pinelabs_allowed_payment_mode or "0"
+		self.pinelabs_upi_qr_payment_mode_code = self.pinelabs_upi_qr_payment_mode_code or "10"
 		self.pinelabs_auto_cancel_duration = max(int(self.pinelabs_auto_cancel_duration or 5), 1)
 		self.payment_link_expiry_hours = max(int(self.payment_link_expiry_hours or 72), 1)
 		self.reset_inactive_gateway_fields()
@@ -154,9 +158,12 @@ class PaymentOrchestratorSettings(Document):
 		if not pinelabs_pos_active:
 			self.pinelabs_pos_mode = "Test"
 			self.pinelabs_merchant_id = None
+			self.pinelabs_merchant_name = None
 			self.clear_secret("pinelabs_security_token")
 			self.pinelabs_store_id = None
+			self.pinelabs_store_name = None
 			self.pinelabs_client_id = None
+			self.pinelabs_device_no = None
 			self.pinelabs_user_id = None
 			self.pinelabs_allowed_payment_mode = "0"
 			self.pinelabs_auto_cancel_duration = 5
@@ -167,6 +174,20 @@ class PaymentOrchestratorSettings(Document):
 			self.default_pos_device_id = None
 			self.pos_timeout_seconds = 30
 			self.pos_mode_of_payment = "Pine Labs POS"
+
+	def set_pinelabs_pos_base_url(self):
+		default_url = PINELABS_PRODUCTION_BASE_URL if self.pinelabs_pos_mode == "Live" else PINELABS_BASE_URL
+		current_url = (self.pinelabs_base_url or "").rstrip("/")
+		if not current_url:
+			self.pinelabs_base_url = default_url
+			return
+		if self.pinelabs_pos_mode == "Live" and current_url == PINELABS_BASE_URL:
+			self.pinelabs_base_url = PINELABS_PRODUCTION_BASE_URL
+			return
+		if self.pinelabs_pos_mode != "Live" and current_url == PINELABS_PRODUCTION_BASE_URL:
+			self.pinelabs_base_url = PINELABS_BASE_URL
+			return
+		self.pinelabs_base_url = current_url
 
 	def clear_secret(self, fieldname):
 		self.set(fieldname, None)

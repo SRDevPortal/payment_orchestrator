@@ -13,19 +13,19 @@ class PineLabsPOSAdapter:
         self.settings = settings
         self.client = PineLabsClient(settings=settings)
 
-    def upload_transaction(self, intent, invoice, context, client_id):
+    def upload_transaction(self, intent, invoice, context, client_id, allowed_payment_mode=None):
         amount = flt(intent.amount_requested)
         payload = {
             "TransactionNumber": intent.name,
             "SequenceNumber": 1,
-            "AllowedPaymentMode": self.settings.pinelabs_allowed_payment_mode or "0",
+            "AllowedPaymentMode": allowed_payment_mode or self.settings.pinelabs_allowed_payment_mode or "0",
             "Amount": int(round(amount * 100)),
             "TotalInvoiceAmount": int(round(flt(invoice.grand_total or amount) * 100)),
             "UserID": self.settings.pinelabs_user_id or frappe.session.user,
-            "MerchantID": self.settings.pinelabs_merchant_id,
+            "MerchantID": _numeric_if_digits(self.settings.pinelabs_merchant_id),
             "SecurityToken": self.settings.get_password("pinelabs_security_token"),
-            "ClientId": client_id,
-            "StoreId": self.settings.pinelabs_store_id,
+            "ClientId": _numeric_if_digits(client_id),
+            "StoreId": _numeric_if_digits(self.settings.pinelabs_store_id),
             "AutoCancelDurationInMinutes": int(self.settings.pinelabs_auto_cancel_duration or 5),
             "CustomerMobileNumber": context.get("mobile") or "",
             "CustomerEmailID": context.get("email") or "",
@@ -34,7 +34,7 @@ class PineLabsPOSAdapter:
         }
         response = self.client.upload_billed_transaction(payload)
         pos_request_id = self.extract_pos_request_id(response)
-        if pos_request_id:
+        if self.is_valid_pos_request_id(pos_request_id):
             intent.db_set("provider_payload_snapshot", as_json(response))
             intent.db_set("provider_pos_request_id", pos_request_id)
             intent.db_set("provider_request_id", pos_request_id or response.get("reference_id") or intent.name)
@@ -58,3 +58,17 @@ class PineLabsPOSAdapter:
             or response.get("plutusTransactionReferenceID")
             or response.get("plutus_transaction_reference_id")
         )
+
+    @staticmethod
+    def is_valid_pos_request_id(pos_request_id):
+        try:
+            return int(pos_request_id) > 0
+        except Exception:
+            return False
+
+
+def _numeric_if_digits(value):
+    value = str(value or "").strip()
+    if value.isdigit():
+        return int(value)
+    return value

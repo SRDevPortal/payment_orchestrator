@@ -1,0 +1,58 @@
+import frappe
+from frappe.utils import flt
+
+from payment_orchestrator.utils import get_settings
+
+
+def allow_partial(settings, reference_doctype):
+    mapping = {
+        "CRM Lead": getattr(settings, "crm_lead_allow_partial_payment", 1),
+        "Patient Encounter": settings.encounter_allow_partial_payment,
+        "Sales Order": settings.sales_order_allow_partial_payment,
+        "Sales Invoice": settings.sales_invoice_allow_partial_payment,
+    }
+    return bool(mapping.get(reference_doctype))
+
+
+def validate_reference_payment_request(reference_doctype, reference_name, amount, settings=None):
+    settings = settings or get_settings()
+    if not reference_doctype or not reference_name:
+        frappe.throw("Reference Doctype and Reference Name are required")
+
+    if not frappe.db.exists(reference_doctype, reference_name):
+        frappe.throw(f"{reference_doctype} {reference_name} not found")
+
+    ensure_reference_read_permission(reference_doctype, reference_name)
+
+    doc = frappe.get_doc(reference_doctype, reference_name)
+    if reference_doctype == "Patient Encounter":
+        validate_patient_encounter_request(doc)
+    elif reference_doctype == "Sales Invoice":
+        validate_sales_invoice_request(doc, amount, settings=settings)
+
+
+def ensure_reference_read_permission(reference_doctype, reference_name):
+    doc = frappe.get_doc(reference_doctype, reference_name)
+    if not doc.has_permission("read"):
+        frappe.throw(f"Not permitted to access {reference_doctype} {reference_name}", frappe.PermissionError)
+
+
+def validate_patient_encounter_request(doc):
+    if int(getattr(doc, "docstatus", 0) or 0) != 0:
+        frappe.throw("Payment request can be generated only for a draft Patient Encounter")
+
+    encounter_type = getattr(doc, "sr_encounter_type", None)
+    if encounter_type and encounter_type != "Order":
+        frappe.throw("Payment request can be generated only for Order Patient Encounters")
+
+
+def validate_sales_invoice_request(doc, amount, settings=None):
+    if int(getattr(doc, "docstatus", 0) or 0) != 1:
+        frappe.throw("Payment request can be generated only for a submitted Sales Invoice")
+
+    outstanding = flt(getattr(doc, "outstanding_amount", 0))
+    if outstanding <= 0:
+        frappe.throw("Sales Invoice has no outstanding amount to collect")
+
+    if flt(amount) > outstanding and not getattr(settings, "allow_overpayment", 0):
+        frappe.throw("Amount cannot be greater than invoice outstanding amount")

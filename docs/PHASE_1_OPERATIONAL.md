@@ -25,9 +25,9 @@
 - customer/party resolution is best-effort and may need SRIAAS-specific hardening after first live pass
 
 ## Primary methods
-- `payment_orchestrator.api.intents.create_payment_intent`
-- `payment_orchestrator.api.intents.create_gateway_payment_link`
-- `payment_orchestrator.api.pos.request_pos_payment`
+- `payment_orchestrator.api.razorpay.create_payment_link`
+- `payment_orchestrator.api.pinelabs.create_payment_link`
+- `payment_orchestrator.api.pinelabs.request_pos_payment`
 - `payment_orchestrator.api.settings.test_provider_connection`
 - `payment_orchestrator.api.webhooks.razorpay`
 - `payment_orchestrator.api.webhooks.pinelabs`

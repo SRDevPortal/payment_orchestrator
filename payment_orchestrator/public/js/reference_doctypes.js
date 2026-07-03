@@ -84,7 +84,10 @@ payment_orchestrator.can_show_qr_code_action = function(frm, settings) {
 
 payment_orchestrator.can_show_pinelabs_pos_action = function(frm, settings) {
     return Boolean(settings.enable_pinelabs_pos)
-        && payment_orchestrator.is_sales_invoice_collectible(frm);
+        && (
+            payment_orchestrator.is_sales_invoice_collectible(frm)
+            || payment_orchestrator.is_patient_encounter_collectible(frm)
+        );
 };
 
 payment_orchestrator.can_show_pinelabs_pos_demo_action = function(frm, settings) {
@@ -141,7 +144,7 @@ payment_orchestrator.toggle_payment_summary_fields = function(frm, settings) {
 
 payment_orchestrator.get_pos_context = function(callback) {
     frappe.call({
-        method: 'payment_orchestrator.api.pos.get_pos_context',
+        method: 'payment_orchestrator.api.pinelabs.get_pos_context',
         callback(r) {
             callback(r.message || {});
         }
@@ -161,6 +164,21 @@ payment_orchestrator.is_payment_complete = function(intent) {
     );
 };
 
+payment_orchestrator.is_payment_failed = function(intent) {
+    if (!intent) return false;
+    const status = String(intent.status || '').toLowerCase();
+    const provider_status = String(intent.pos_failure_reason || intent.payment_status || intent.pos_request_status || '').toLowerCase();
+    return (
+        ['cancelled', 'canceled', 'expired', 'failed'].includes(status) ||
+        provider_status.includes('cancel') ||
+        provider_status.includes('expired') ||
+        provider_status.includes('failed') ||
+        provider_status.includes('invalid') ||
+        provider_status.includes('declined') ||
+        provider_status.includes('error')
+    );
+};
+
 payment_orchestrator.stop_payment_watcher = function(payment_intent) {
     const watcher = payment_orchestrator.payment_watchers[payment_intent];
     if (!watcher) return;
@@ -170,6 +188,9 @@ payment_orchestrator.stop_payment_watcher = function(payment_intent) {
     if (watcher.timeout) clearTimeout(watcher.timeout);
     if (watcher.realtime_handler && frappe.realtime && frappe.realtime.off) {
         frappe.realtime.off('payment_orchestrator_payment_completed', watcher.realtime_handler);
+    }
+    if (watcher.failure_handler && frappe.realtime && frappe.realtime.off) {
+        frappe.realtime.off('payment_orchestrator_payment_failed', watcher.failure_handler);
     }
     delete payment_orchestrator.payment_watchers[payment_intent];
 };
@@ -299,6 +320,7 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
     const frm = opts.frm;
     const timeout_ms = opts.timeout_ms || 10 * 60 * 1000;
     const provider_poll_ms = opts.provider_poll_ms || 15 * 1000;
+    const started_at = Date.now();
     let last_provider_fetch = 0;
 
     payment_orchestrator.stop_payment_watcher(payment_intent);
@@ -310,9 +332,7 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
         if (watcher.stopped) return;
         payment_orchestrator.stop_payment_watcher(payment_intent);
 
-        if (dialog && dialog.hide) {
-            dialog.hide();
-        }
+        payment_orchestrator.hide_payment_dialog(dialog);
         frappe.show_alert({
             message: __('Payment received and allocated'),
             indicator: 'green'
@@ -322,15 +342,37 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
         }
     };
 
+    const fail = function(message) {
+        if (watcher.stopped) return;
+        payment_orchestrator.stop_payment_watcher(payment_intent);
+
+        payment_orchestrator.hide_payment_dialog(dialog);
+        frappe.show_alert({
+            message: message || __('Payment was cancelled or failed on terminal'),
+            indicator: 'red'
+        }, 10);
+        if (frm && frm.reload_doc) {
+            frm.reload_doc();
+        }
+    };
+
     const poll = function() {
         if (watcher.stopped) return;
+        if (Date.now() - started_at > timeout_ms) {
+            fail(__('Payment status check timed out. Please open the Payment Intent to sync latest status.'));
+            return;
+        }
         frappe.call({
-            method: 'payment_orchestrator.api.intents.get_payment_intent',
+            method: 'payment_orchestrator.api.common.intents.get_payment_intent',
             args: { payment_intent },
             callback(r) {
                 const intent = r.message || {};
                 if (payment_orchestrator.is_payment_complete(intent)) {
                     complete(intent);
+                    return;
+                }
+                if (payment_orchestrator.is_payment_failed(intent)) {
+                    fail(intent.pos_failure_reason || intent.payment_status || intent.pos_request_status || intent.status);
                     return;
                 }
                 const now = Date.now();
@@ -345,7 +387,9 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
                     && ['Pine Labs', 'Razorpay'].includes(intent.gateway)
                 ) {
                     frappe.call({
-                        method: 'payment_orchestrator.api.provider.fetch_payment_link',
+                        method: intent.gateway === 'Pine Labs'
+                            ? 'payment_orchestrator.api.pinelabs.fetch_payment_link'
+                            : 'payment_orchestrator.api.razorpay.fetch_payment_link',
                         args: { payment_intent },
                         callback(fetch_response) {
                             const result = (fetch_response.message || {}).result || {};
@@ -363,13 +407,33 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
                     && intent.gateway === 'Razorpay'
                 ) {
                     frappe.call({
-                        method: 'payment_orchestrator.api.provider.fetch_qr_code',
+                        method: 'payment_orchestrator.api.razorpay.fetch_qr_code',
                         args: { payment_intent },
                         callback() {
                             poll();
                         },
                         error() {
                             // Keep the UI watcher alive; webhook/callback may still update the intent.
+                        }
+                    });
+                } else if (
+                    intent.payment_mode === 'POS'
+                    && intent.provider_pos_request_id
+                    && intent.gateway === 'Pine Labs'
+                ) {
+                    frappe.call({
+                        method: 'payment_orchestrator.api.pinelabs.fetch_pos_payment_status',
+                        args: { payment_intent },
+                        callback(pos_response) {
+                            const pos_result = pos_response.message || {};
+                            if (pos_result.failed) {
+                                fail(pos_result.failure_message);
+                                return;
+                            }
+                            poll();
+                        },
+                        error() {
+                            // Keep polling; the terminal may still complete the payment.
                         }
                     });
                 }
@@ -382,16 +446,42 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
             complete(data);
         }
     };
+    watcher.failure_handler = function(data) {
+        if ((data || {}).payment_intent === payment_intent) {
+            fail((data || {}).message || __('Payment was cancelled or failed on terminal'));
+        }
+    };
     if (frappe.realtime && frappe.realtime.on) {
         frappe.realtime.on('payment_orchestrator_payment_completed', watcher.realtime_handler);
+        frappe.realtime.on('payment_orchestrator_payment_failed', watcher.failure_handler);
     }
 
     watcher.interval = setInterval(poll, 3000);
-    watcher.timeout = setTimeout(() => payment_orchestrator.stop_payment_watcher(payment_intent), timeout_ms);
+    watcher.timeout = setTimeout(() => {
+        frappe.call({
+            method: 'payment_orchestrator.api.sync.expire_stale_unpaid_intents',
+            args: { limit: 100 },
+            always() {
+                fail(__('POS payment request expired without successful payment.'));
+            }
+        });
+    }, timeout_ms);
     setTimeout(poll, 1500);
 
     if (dialog && dialog.$wrapper) {
         dialog.$wrapper.on('hidden.bs.modal', () => payment_orchestrator.stop_payment_watcher(payment_intent));
+    }
+};
+
+payment_orchestrator.hide_payment_dialog = function(dialog) {
+    if (dialog && dialog.hide) {
+        dialog.hide();
+    }
+    if (frappe.msg_dialog && frappe.msg_dialog.hide) {
+        frappe.msg_dialog.hide();
+    }
+    if (frappe.hide_msgprint) {
+        frappe.hide_msgprint();
     }
 };
 
@@ -451,7 +541,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
             primary_action_label: __('Generate Payment Link'),
             primary_action(values) {
                 frappe.call({
-                    method: 'payment_orchestrator.api.intents.create_payment_intent',
+                    method: 'payment_orchestrator.api.razorpay.create_payment_link',
                     args: {
                         reference_doctype: frm.doctype,
                         reference_name: frm.doc.name,
@@ -497,7 +587,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                 primary_action_label: __('Generate QR Code'),
                 primary_action(values) {
                     frappe.call({
-                        method: 'payment_orchestrator.api.intents.create_razorpay_qr_code',
+                        method: 'payment_orchestrator.api.razorpay.create_qr_code',
                         args: {
                             reference_doctype: frm.doctype,
                             reference_name: frm.doc.name,
@@ -543,12 +633,11 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                 primary_action_label: __('Generate Payment Link'),
                 primary_action(values) {
                     frappe.call({
-                        method: 'payment_orchestrator.api.intents.create_gateway_payment_link',
+                        method: 'payment_orchestrator.api.pinelabs.create_payment_link',
                         args: {
                             reference_doctype: frm.doctype,
                             reference_name: frm.doc.name,
                             amount: values.amount,
-                            gateway: 'Pine Labs',
                             request_type: values.request_type,
                             notes: values.notes,
                         },
@@ -579,20 +668,30 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
 
     if (payment_orchestrator.can_show_pinelabs_pos_action(frm, settings)) {
         frm.add_custom_button(__('Pine Labs POS'), function() {
-            const default_amount = frm.doc.outstanding_amount || frm.doc.grand_total || 0;
+            const default_amount = frm.doc.outstanding_amount || frm.doc.grand_total || frm.doc.base_grand_total || frm.doc.paid_amount || 0;
             const dialog = new frappe.ui.Dialog({
                 title: __('Pine Labs POS Payment'),
                 fields: [
                     { label: __('Amount'), fieldname: 'amount', fieldtype: 'Currency', reqd: 1, default: default_amount },
+                    {
+                        label: __('Payment Method'),
+                        fieldname: 'pos_payment_method',
+                        fieldtype: 'Select',
+                        options: 'All Modes\nCard\nUPI / QR',
+                        default: 'All Modes',
+                        reqd: 1,
+                    },
                     { label: __('Notes'), fieldname: 'notes', fieldtype: 'Small Text' }
                 ],
                 primary_action_label: __('Send to POS'),
                 primary_action(values) {
                     frappe.call({
-                        method: 'payment_orchestrator.api.pos.request_pos_payment',
+                        method: 'payment_orchestrator.api.pinelabs.request_pos_payment_from_reference',
                         args: {
-                            sales_invoice: frm.doc.name,
+                            reference_doctype: frm.doctype,
+                            reference_name: frm.doc.name,
                             amount: values.amount,
+                            pos_payment_method: values.pos_payment_method || 'All Modes',
                             notes: values.notes,
                         },
                         freeze: true,
@@ -602,10 +701,16 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                             dialog.hide();
                             frappe.msgprint({
                                 title: __('POS Payment Requested'),
-                                message: `<div><p>${__('Payment Intent')}: <b>${frappe.utils.escape_html(data.payment_intent || '')}</b></p><p>${__('POS Request')}: <b>${frappe.utils.escape_html(data.provider_pos_request_id || data.pos_request_status || '')}</b></p><p>${__('Terminal')}: <b>${frappe.utils.escape_html(data.terminal_id || '')}</b></p></div>`,
+                                message: `<div><p>${__('Sales Invoice')}: <b>${frappe.utils.escape_html(data.sales_invoice || '')}</b></p><p>${__('Payment Intent')}: <b>${frappe.utils.escape_html(data.payment_intent || '')}</b></p><p>${__('Method')}: <b>${frappe.utils.escape_html(data.pos_payment_method || '')}</b></p><p>${__('POS Request')}: <b>${frappe.utils.escape_html(data.provider_pos_request_id || data.pos_request_status || '')}</b></p><p>${__('Terminal')}: <b>${frappe.utils.escape_html(data.terminal_id || '')}</b></p></div>`,
                                 indicator: 'green'
                             });
-                            frm.reload_doc();
+                            const pos_timeout_minutes = Number(data.auto_cancel_duration || 5) + 1;
+                            payment_orchestrator.watch_payment_completion(data.payment_intent, {
+                                frm,
+                                dialog: frappe.msg_dialog,
+                                provider_poll_ms: 1500,
+                                timeout_ms: pos_timeout_minutes * 60 * 1000,
+                            });
                         }
                     });
                 }
@@ -626,7 +731,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                 primary_action_label: __('Mock Paid on POS'),
                 primary_action(values) {
                     frappe.call({
-                        method: 'payment_orchestrator.api.pos.mock_pos_payment',
+                        method: 'payment_orchestrator.api.pinelabs.mock_pos_payment',
                         args: {
                             reference_doctype: frm.doctype,
                             reference_name: frm.doc.name,

@@ -6,11 +6,11 @@ import frappe
 from frappe.utils import escape_html
 
 from payment_orchestrator.logic import process_provider_payment_success
-from payment_orchestrator.api.pos import _apply_pinelabs_success
-from payment_orchestrator.api.provider import (
-    _is_pinelabs_payment_link_success,
-    _pinelabs_payment_link_success_payload,
-    _sync_pinelabs_payment_link,
+from payment_orchestrator.api.pinelabs import (
+    apply_pos_success as _apply_pinelabs_success,
+    is_payment_link_success as _is_pinelabs_payment_link_success,
+    payment_link_success_payload as _pinelabs_payment_link_success_payload,
+    sync_payment_link as _sync_pinelabs_payment_link,
 )
 from payment_orchestrator.utils import (
     get_settings,
