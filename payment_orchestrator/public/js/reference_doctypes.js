@@ -287,6 +287,7 @@ payment_orchestrator.render_payment_link_result = function(data) {
         <div class="po-payment-result" style="text-align:center;">
             <p><a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a></p>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:center;">
+                ${payment_orchestrator.payment_result_button(__('Send WhatsApp'), 'whatsapp', data.payment_intent || '')}
                 ${payment_orchestrator.payment_result_button(__('Copy Link'), 'copy', data.payment_link_url || '')}
                 ${payment_orchestrator.payment_result_button(__('Open Link'), 'open', data.payment_link_url || '')}
             </div>
@@ -303,12 +304,29 @@ payment_orchestrator.render_qr_result = function(data) {
                 <img src="${url}" style="max-width:260px;width:100%;height:auto;border:1px solid #e5e7eb;padding:8px;border-radius:6px;background:#fff;">
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:center;">
+                ${payment_orchestrator.payment_result_button(__('Send WhatsApp'), 'whatsapp', data.payment_intent || '')}
                 ${payment_orchestrator.payment_result_button(
                     __('Download QR Code'),
                     'download',
                     data.qr_code_url || '',
                     `data-po-filename="${filename}"`
                 )}
+            </div>
+        </div>
+    `;
+};
+
+payment_orchestrator.render_pos_result = function(data) {
+    return `
+        <div class="po-payment-result" style="text-align:center;">
+            <p>${__('Payment Intent')}: <b>${frappe.utils.escape_html(data.payment_intent || '')}</b></p>
+            <p>${__('Request Type')}: <b>${frappe.utils.escape_html(data.request_type || '')}</b></p>
+            <p>${__('Method')}: <b>${frappe.utils.escape_html(data.pos_payment_method || '')}</b></p>
+            <p>${__('POS Request')}: <b>${frappe.utils.escape_html(data.provider_pos_request_id || data.pos_request_status || '')}</b></p>
+            <p>${__('Terminal')}: <b>${frappe.utils.escape_html(data.terminal_id || '')}</b></p>
+            ${data.sales_invoice ? `<p>${__('Sales Invoice')}: <b>${frappe.utils.escape_html(data.sales_invoice || '')}</b></p>` : ''}
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:center;">
+                ${payment_orchestrator.payment_result_button(__('Send WhatsApp'), 'whatsapp', data.payment_intent || '')}
             </div>
         </div>
     `;
@@ -329,8 +347,55 @@ payment_orchestrator.bind_payment_result_actions = function() {
             window.open(value, '_blank', 'noopener');
         } else if (action === 'download') {
             payment_orchestrator.download_url(value, $button.attr('data-po-filename'));
+        } else if (action === 'whatsapp') {
+            payment_orchestrator.send_payment_whatsapp(value);
         }
     });
+};
+
+payment_orchestrator.send_payment_whatsapp = function(payment_intent, mobile_no) {
+    if (!payment_intent) {
+        frappe.msgprint(__('Payment Intent is required to send WhatsApp.'));
+        return;
+    }
+
+    frappe.call({
+        method: 'payment_orchestrator.api.whatsapp.send_payment_request',
+        args: {
+            payment_intent,
+            mobile_no: mobile_no || '',
+        },
+        freeze: true,
+        freeze_message: __('Sending WhatsApp...'),
+        callback(r) {
+            const data = r.message || {};
+            if (data.needs_mobile) {
+                payment_orchestrator.prompt_payment_whatsapp_mobile(payment_intent);
+                return;
+            }
+            if (data.ok) {
+                frappe.show_alert({
+                    message: __('WhatsApp sent to {0}', [data.mobile_no || '']),
+                    indicator: 'green',
+                }, 8);
+            }
+        },
+    });
+};
+
+payment_orchestrator.prompt_payment_whatsapp_mobile = function(payment_intent) {
+    const dialog = new frappe.ui.Dialog({
+        title: __('Send WhatsApp'),
+        fields: [
+            { label: __('Mobile Number'), fieldname: 'mobile_no', fieldtype: 'Data', reqd: 1 },
+        ],
+        primary_action_label: __('Send WhatsApp'),
+        primary_action(values) {
+            payment_orchestrator.hide_dialog(dialog);
+            payment_orchestrator.send_payment_whatsapp(payment_intent, values.mobile_no);
+        },
+    });
+    dialog.show();
 };
 
 payment_orchestrator.watch_payment_completion = function(payment_intent, options) {
@@ -494,6 +559,7 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
 };
 
 payment_orchestrator.hide_payment_dialog = function(dialog) {
+    payment_orchestrator.blur_active_modal_element();
     if (dialog && dialog.hide) {
         dialog.hide();
     }
@@ -502,6 +568,20 @@ payment_orchestrator.hide_payment_dialog = function(dialog) {
     }
     if (frappe.hide_msgprint) {
         frappe.hide_msgprint();
+    }
+};
+
+payment_orchestrator.hide_dialog = function(dialog) {
+    payment_orchestrator.blur_active_modal_element();
+    if (dialog && dialog.hide) {
+        dialog.hide();
+    }
+};
+
+payment_orchestrator.blur_active_modal_element = function() {
+    const active = document.activeElement;
+    if (active && active.blur && $(active).closest('.modal').length) {
+        active.blur();
     }
 };
 
@@ -573,7 +653,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                     freeze_message: __('Generating Razorpay payment link...'),
                     callback(r) {
                         const data = r.message || {};
-                        dialog.hide();
+                        payment_orchestrator.hide_dialog(dialog);
                         if (data.payment_link_url) {
                             frappe.msgprint({
                                 title: __('Payment Link Created'),
@@ -619,7 +699,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                         freeze_message: __('Generating Razorpay QR code...'),
                         callback(r) {
                             const data = r.message || {};
-                            dialog.hide();
+                            payment_orchestrator.hide_dialog(dialog);
                             if (data.qr_code_url) {
                                 frappe.msgprint({
                                     title: __('QR Code Created'),
@@ -665,7 +745,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                         freeze_message: __('Generating Pine Labs payment link...'),
                         callback(r) {
                             const data = r.message || {};
-                            dialog.hide();
+                            payment_orchestrator.hide_dialog(dialog);
                             if (data.payment_link_url) {
                                 frappe.msgprint({
                                     title: __('Payment Link Created'),
@@ -730,10 +810,10 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                         freeze_message: __('Sending payment request to POS machine...'),
                         callback(r) {
                             const data = r.message || {};
-                            dialog.hide();
+                            payment_orchestrator.hide_dialog(dialog);
                             frappe.msgprint({
                                 title: __('POS Payment Requested'),
-                                message: `<div><p>${__('Sales Invoice')}: <b>${frappe.utils.escape_html(data.sales_invoice || '')}</b></p><p>${__('Payment Intent')}: <b>${frappe.utils.escape_html(data.payment_intent || '')}</b></p><p>${__('Request Type')}: <b>${frappe.utils.escape_html(data.request_type || '')}</b></p><p>${__('Method')}: <b>${frappe.utils.escape_html(data.pos_payment_method || '')}</b></p><p>${__('POS Request')}: <b>${frappe.utils.escape_html(data.provider_pos_request_id || data.pos_request_status || '')}</b></p><p>${__('Terminal')}: <b>${frappe.utils.escape_html(data.terminal_id || '')}</b></p></div>`,
+                                message: payment_orchestrator.render_pos_result(data),
                                 indicator: 'green'
                             });
                             const pos_timeout_minutes = Number(data.auto_cancel_duration || 5) + 1;
@@ -774,7 +854,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                         freeze_message: __('Mocking POS payment...'),
                         callback(r) {
                             const data = r.message || {};
-                            dialog.hide();
+                            payment_orchestrator.hide_dialog(dialog);
                             frappe.msgprint({
                                 title: __('Demo POS Payment Complete'),
                                 message: `<div><p>${__('Sales Invoice')}: <b>${frappe.utils.escape_html(data.sales_invoice || '')}</b></p><p>${__('Payment Intent')}: <b>${frappe.utils.escape_html(data.payment_intent || '')}</b></p><p>${__('Payment Entry')}: <b>${frappe.utils.escape_html(data.payment_entry || '')}</b></p><p>${__('Terminal')}: <b>${frappe.utils.escape_html(data.terminal_id || '')}</b></p></div>`,

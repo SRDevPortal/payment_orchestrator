@@ -5,9 +5,16 @@ from unittest.mock import patch
 
 from payment_orchestrator.provider.pinelabs.payment_link import PineLabsPaymentLinkAdapter
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
-from payment_orchestrator.provider.razorpay.qr_code import RazorpayQRCodeAdapter
+from payment_orchestrator.provider.razorpay.qr_code import RazorpayQRCodeAdapter, resolve_qr_image_url
 from payment_orchestrator.api.pinelabs import pinelabs_amount, resolve_pos_request_type
 from payment_orchestrator.logic import _extract_payment_entity, _resolve_mode_of_payment
+from payment_orchestrator.notifications.whatsapp import (
+    build_payment_whatsapp_message,
+    normalize_mobile,
+    payment_instruction,
+    payment_whatsapp_transport,
+    resolve_payment_channel_account,
+)
 from payment_orchestrator.payment_orchestrator.doctype.payment_orchestrator_settings.payment_orchestrator_settings import (
     PINELABS_BASE_URL,
     PINELABS_PAYMENT_LINK_DEFAULT_DISPLAY,
@@ -162,6 +169,138 @@ class ModeOfPaymentResolutionTests(TestCase):
         self.assertEqual(
             self._resolve(self._intent("Pine Labs", "POS"), self._settings()),
             "Pine Labs POS",
+        )
+
+
+class WhatsAppPaymentNotificationTests(TestCase):
+    def test_normalize_mobile_defaults_indian_ten_digit_numbers(self):
+        self.assertEqual(normalize_mobile("98765 43210"), "919876543210")
+        self.assertEqual(normalize_mobile("+91-98765-43210"), "919876543210")
+
+    def test_payment_link_message_contains_payment_url_and_reference(self):
+        intent = SimpleNamespace(
+            amount_requested=10,
+            currency="INR",
+            payment_mode="Payment Link",
+            payment_link_url="https://rzp.io/rzp/test",
+            qr_code_url=None,
+            reference_doctype="Patient Encounter",
+            reference_name="HLC-ENC-1",
+            party_name="Test Patient",
+            company="Test Clinic",
+        )
+
+        message = build_payment_whatsapp_message(intent, {"display_name": "Test Patient"})
+
+        self.assertIn("₹ 10.00", message)
+        self.assertIn("https://rzp.io/rzp/test", message)
+        self.assertIn("Reference: Patient Encounter HLC-ENC-1", message)
+
+    def test_pos_instruction_does_not_require_link(self):
+        intent = SimpleNamespace(payment_mode="POS", payment_link_url=None, qr_code_url=None)
+
+        self.assertIn("POS terminal", payment_instruction(intent))
+
+    def test_qr_uses_image_transport_for_interakt(self):
+        intent = SimpleNamespace(name="PI-1", payment_mode="QR Code", qr_code_url="https://rzp.io/rzp/test")
+        fake_frappe = SimpleNamespace(db=SimpleNamespace(get_value=lambda *args, **kwargs: "Interakt"))
+
+        with patch("payment_orchestrator.notifications.whatsapp.frappe", fake_frappe), patch(
+            "payment_orchestrator.notifications.whatsapp.interakt_qr_image_url",
+            return_value="https://interakt.example/payment-qr-PI-1.png",
+        ):
+            self.assertEqual(
+                payment_whatsapp_transport(intent, "WA Account"),
+                ("Image", "https://interakt.example/payment-qr-PI-1.png"),
+            )
+
+    def test_existing_active_conversation_channel_wins(self):
+        fake_frappe = self._fake_channel_frappe(
+            conversations=[SimpleNamespace(channel_account="Existing Interakt")],
+            accounts={"Existing Interakt": self._account("Interakt", 1, "Active")},
+            default_channel="Default Interakt",
+        )
+
+        with patch("payment_orchestrator.notifications.whatsapp.frappe", fake_frappe):
+            self.assertEqual(
+                resolve_payment_channel_account({"mobile_no": "919876543210"}, contact="CONTACT-1"),
+                "Existing Interakt",
+            )
+
+    def test_default_channel_is_used_when_no_existing_conversation(self):
+        fake_frappe = self._fake_channel_frappe(
+            conversations=[],
+            accounts={"Default Interakt": self._account("Interakt", 1, "Active")},
+            default_channel="Default Interakt",
+        )
+
+        with patch("payment_orchestrator.notifications.whatsapp.frappe", fake_frappe):
+            self.assertEqual(
+                resolve_payment_channel_account({"mobile_no": "919876543210"}, contact="CONTACT-1"),
+                "Default Interakt",
+            )
+
+    def test_invalid_existing_conversation_channel_is_skipped(self):
+        fake_frappe = self._fake_channel_frappe(
+            conversations=[
+                SimpleNamespace(channel_account="Inactive Interakt"),
+                SimpleNamespace(channel_account="Personal WA"),
+                SimpleNamespace(channel_account="Existing Interakt"),
+            ],
+            accounts={
+                "Inactive Interakt": self._account("Interakt", 0, "Active"),
+                "Personal WA": self._account("Personal", 1, "Active"),
+                "Existing Interakt": self._account("Interakt", 1, "Active"),
+            },
+            default_channel="Default Interakt",
+        )
+
+        with patch("payment_orchestrator.notifications.whatsapp.frappe", fake_frappe):
+            self.assertEqual(
+                resolve_payment_channel_account({"mobile_no": "919876543210"}, contact="CONTACT-1"),
+                "Existing Interakt",
+            )
+
+    def test_missing_conversation_and_default_channel_raises_clear_error(self):
+        fake_frappe = self._fake_channel_frappe(conversations=[], accounts={}, default_channel=None)
+
+        with patch("payment_orchestrator.notifications.whatsapp.frappe", fake_frappe):
+            with self.assertRaisesRegex(Exception, "No active WhatsApp conversation found"):
+                resolve_payment_channel_account({"mobile_no": "919876543210"}, contact="CONTACT-1")
+
+    def test_invalid_default_channel_raises_clear_error(self):
+        fake_frappe = self._fake_channel_frappe(
+            conversations=[],
+            accounts={"Default Interakt": self._account("Interakt", 0, "Active")},
+            default_channel="Default Interakt",
+        )
+
+        with patch("payment_orchestrator.notifications.whatsapp.frappe", fake_frappe):
+            with self.assertRaisesRegex(Exception, "inactive, disconnected, or not an Interakt"):
+                resolve_payment_channel_account({"mobile_no": "919876543210"}, contact="CONTACT-1")
+
+    def _fake_channel_frappe(self, conversations, accounts, default_channel):
+        def get_value(doctype, filters=None, fieldname=None, **kwargs):
+            if doctype == "Chat Channel Account":
+                return accounts.get(filters)
+            if doctype == "Chat Contact":
+                return "CONTACT-1"
+            return None
+
+        return SimpleNamespace(
+            db=SimpleNamespace(get_value=get_value),
+            get_meta=lambda doctype: SimpleNamespace(has_field=lambda fieldname: fieldname == "status"),
+            get_all=lambda *args, **kwargs: conversations,
+            get_single=lambda doctype: SimpleNamespace(default_whatsapp_channel_account=default_channel),
+            throw=lambda message: (_ for _ in ()).throw(Exception(str(message))),
+            _=lambda message: message,
+        )
+
+    def _account(self, channel_type, is_active, connector_status):
+        return SimpleNamespace(
+            channel_type=channel_type,
+            is_active=is_active,
+            connector_status=connector_status,
         )
 
 
@@ -447,7 +586,10 @@ class RazorpayQRCodeAdapterTests(TestCase):
             "image_url": "https://rzp.io/rzp/qr123",
             "status": "active",
             "close_by": 1767270600,
-        }) as create_qr:
+        }) as create_qr, patch(
+            "payment_orchestrator.provider.razorpay.qr_code.resolve_qr_image_url",
+            return_value="https://api.razorpay.com/v1/l/qrcode/qr_123",
+        ):
             adapter.create(intent, {"party": "CUST-0001"})
 
         payload = create_qr.call_args.args[0]
@@ -456,3 +598,28 @@ class RazorpayQRCodeAdapterTests(TestCase):
         self.assertTrue(payload["fixed_amount"])
         self.assertEqual(payload["payment_amount"], 200)
         self.assertEqual(payload["notes"]["payment_intent"], "PI-QR-0001")
+
+    def test_resolve_qr_image_url_uses_final_image_redirect_url(self):
+        response = SimpleNamespace(
+            url="https://api.razorpay.com/v1/l/qrcode/qr_123",
+            headers={"Content-Type": "image/png"},
+            raise_for_status=lambda: None,
+            close=lambda: None,
+        )
+
+        with patch("payment_orchestrator.provider.razorpay.qr_code.requests.get", return_value=response):
+            self.assertEqual(
+                resolve_qr_image_url("https://rzp.io/rzp/qr123"),
+                "https://api.razorpay.com/v1/l/qrcode/qr_123",
+            )
+
+    def test_resolve_qr_image_url_keeps_original_when_response_is_not_image(self):
+        response = SimpleNamespace(
+            url="https://rzp.io/rzp/qr123",
+            headers={"Content-Type": "text/html"},
+            raise_for_status=lambda: None,
+            close=lambda: None,
+        )
+
+        with patch("payment_orchestrator.provider.razorpay.qr_code.requests.get", return_value=response):
+            self.assertEqual(resolve_qr_image_url("https://rzp.io/rzp/qr123"), "https://rzp.io/rzp/qr123")
