@@ -1,5 +1,6 @@
 import frappe
 
+from payment_orchestrator.api.common.validation import ensure_payment_intent_action_permission
 from payment_orchestrator.logic import allocate_available_amount, refresh_intent_and_reference
 from payment_orchestrator.utils import is_doctype_enabled
 
@@ -7,6 +8,7 @@ from payment_orchestrator.utils import is_doctype_enabled
 @frappe.whitelist()
 def auto_allocate(payment_intent):
     intent = frappe.get_doc('Payment Intent', payment_intent)
+    ensure_payment_intent_action_permission(intent)
     payment_entry = _resolve_payment_entry(intent)
     if not payment_entry:
         frappe.throw('No Payment Entry linked to this payment intent yet')

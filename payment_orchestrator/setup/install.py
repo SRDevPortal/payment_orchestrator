@@ -229,7 +229,7 @@ def _enabled_setting(settings, fieldname: str) -> int:
 
 
 def ensure_default_modes_of_payment():
-    for mode in ("Razorpay", "Pine Labs", "Pine Labs POS"):
+    for mode in ("Razorpay", "Razorpay POS", "Pine Labs", "Pine Labs POS"):
         if not frappe.db.exists("Mode of Payment", mode):
             frappe.get_doc({
                 "doctype": "Mode of Payment",

@@ -59,7 +59,7 @@ class PineLabsPaymentLinkAdapter:
                 "reference_name": intent.reference_name,
                 "request_type": intent.request_type,
             },
-            "part_payment": bool(context.get("allow_partial")),
+            "part_payment": False,
         }
         payload.update(_callback_payload(self.settings))
         return _clean(payload)

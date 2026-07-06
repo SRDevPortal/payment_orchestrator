@@ -6,8 +6,8 @@ from unittest.mock import patch
 from payment_orchestrator.provider.pinelabs.payment_link import PineLabsPaymentLinkAdapter
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
 from payment_orchestrator.provider.razorpay.qr_code import RazorpayQRCodeAdapter
-from payment_orchestrator.api.pinelabs import pinelabs_amount
-from payment_orchestrator.logic import _extract_payment_entity
+from payment_orchestrator.api.pinelabs import pinelabs_amount, resolve_pos_request_type
+from payment_orchestrator.logic import _extract_payment_entity, _resolve_mode_of_payment
 from payment_orchestrator.payment_orchestrator.doctype.payment_orchestrator_settings.payment_orchestrator_settings import (
     PINELABS_BASE_URL,
     PINELABS_PAYMENT_LINK_DEFAULT_DISPLAY,
@@ -118,6 +118,51 @@ class ResetInactiveGatewayFieldsTests(TestCase):
         self.assertIsNone(settings.pinelabs_merchant_id)
         self.assertEqual(settings.pinelabs_base_url, PINELABS_BASE_URL)
         self.assertEqual(settings.cleared_secrets, ["pinelabs_online_client_secret", "pinelabs_security_token"])
+
+
+class ModeOfPaymentResolutionTests(TestCase):
+    def _settings(self, **overrides):
+        defaults = {
+            "default_mode_of_payment": "Razorpay",
+            "pos_mode_of_payment": "Pine Labs POS",
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def _intent(self, gateway, payment_mode):
+        return SimpleNamespace(gateway=gateway, payment_mode=payment_mode, request_channel=payment_mode)
+
+    def _resolve(self, intent, settings):
+        fake_frappe = SimpleNamespace(
+            db=SimpleNamespace(exists=lambda *args, **kwargs: True),
+            get_doc=lambda *args, **kwargs: None,
+        )
+        with patch("payment_orchestrator.logic.frappe", fake_frappe):
+            return _resolve_mode_of_payment(intent, settings)
+
+    def test_razorpay_link_and_qr_use_razorpay_mode_of_payment(self):
+        settings = self._settings()
+
+        self.assertEqual(self._resolve(self._intent("Razorpay", "Payment Link"), settings), "Razorpay")
+        self.assertEqual(self._resolve(self._intent("Razorpay", "QR Code"), settings), "Razorpay")
+
+    def test_razorpay_pos_uses_razorpay_pos_mode_of_payment(self):
+        self.assertEqual(
+            self._resolve(self._intent("Razorpay", "POS"), self._settings()),
+            "Razorpay POS",
+        )
+
+    def test_pinelabs_link_and_qr_use_pinelabs_mode_of_payment(self):
+        settings = self._settings()
+
+        self.assertEqual(self._resolve(self._intent("Pine Labs", "Payment Link"), settings), "Pine Labs")
+        self.assertEqual(self._resolve(self._intent("Pine Labs", "QR Code"), settings), "Pine Labs")
+
+    def test_pinelabs_pos_uses_pinelabs_pos_mode_of_payment(self):
+        self.assertEqual(
+            self._resolve(self._intent("Pine Labs", "POS"), self._settings()),
+            "Pine Labs POS",
+        )
 
 
 class GatewayModeFlagTests(TestCase):
@@ -250,7 +295,7 @@ class PineLabsPaymentLinkAdapterTests(TestCase):
         self.assertEqual(payload["amount"], {"value": 12550, "currency": "INR"})
         self.assertEqual(payload["merchant_payment_link_reference"], "PI-0001")
         self.assertEqual(payload["allowed_payment_methods"], ["CARD", "UPI"])
-        self.assertTrue(payload["part_payment"])
+        self.assertFalse(payload["part_payment"])
         self.assertEqual(payload["customer"]["mobile_number"], "9876543210")
         self.assertNotIn("callback_url", payload)
         self.assertNotIn("failure_callback_url", payload)
@@ -368,6 +413,17 @@ class PineLabsAmountTests(TestCase):
         response = {"Amount": "12550"}
 
         self.assertEqual(pinelabs_amount(response), 125.5)
+
+
+class PineLabsPOSRequestTypeTests(TestCase):
+    def test_sales_invoice_defaults_to_against_invoice(self):
+        self.assertEqual(resolve_pos_request_type("Sales Invoice"), "Against Invoice")
+
+    def test_patient_encounter_defaults_to_advance(self):
+        self.assertEqual(resolve_pos_request_type("Patient Encounter"), "Advance")
+
+    def test_patient_encounter_allows_against_invoice(self):
+        self.assertEqual(resolve_pos_request_type("Patient Encounter", "Against Invoice"), "Against Invoice")
 
 
 class RazorpayQRCodeAdapterTests(TestCase):

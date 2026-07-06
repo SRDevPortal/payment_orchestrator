@@ -282,13 +282,11 @@ payment_orchestrator.payment_result_button = function(label, action, value, extr
 };
 
 payment_orchestrator.render_payment_link_result = function(data) {
-    const intent = payment_orchestrator.escape_html(data.payment_intent || '');
     const url = payment_orchestrator.escape_html(data.payment_link_url || '');
     return `
-        <div class="po-payment-result">
-            <p>${__('Payment Intent')}: <b>${intent}</b></p>
+        <div class="po-payment-result" style="text-align:center;">
             <p><a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a></p>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:center;">
                 ${payment_orchestrator.payment_result_button(__('Copy Link'), 'copy', data.payment_link_url || '')}
                 ${payment_orchestrator.payment_result_button(__('Open Link'), 'open', data.payment_link_url || '')}
             </div>
@@ -297,19 +295,14 @@ payment_orchestrator.render_payment_link_result = function(data) {
 };
 
 payment_orchestrator.render_qr_result = function(data) {
-    const intent = payment_orchestrator.escape_html(data.payment_intent || '');
     const url = payment_orchestrator.escape_html(data.qr_code_url || '');
     const filename = payment_orchestrator.escape_html(`payment-qr-${data.payment_intent || frappe.datetime.now_datetime()}.png`);
     return `
-        <div class="po-payment-result">
-            <p>${__('Payment Intent')}: <b>${intent}</b></p>
-            <p><a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a></p>
+        <div class="po-payment-result" style="text-align:center;">
             <div style="margin-top:12px;">
                 <img src="${url}" style="max-width:260px;width:100%;height:auto;border:1px solid #e5e7eb;padding:8px;border-radius:6px;background:#fff;">
             </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
-                ${payment_orchestrator.payment_result_button(__('Copy QR Link'), 'copy', data.qr_code_url || '')}
-                ${payment_orchestrator.payment_result_button(__('Open QR'), 'open', data.qr_code_url || '')}
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:center;">
                 ${payment_orchestrator.payment_result_button(
                     __('Download QR Code'),
                     'download',
@@ -696,10 +689,21 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
     if (payment_orchestrator.can_show_pinelabs_pos_action(frm, settings)) {
         frm.add_custom_button(__('Pine Labs POS'), function() {
             const default_amount = frm.doc.outstanding_amount || frm.doc.grand_total || frm.doc.base_grand_total || frm.doc.paid_amount || 0;
+            const request_type_options = frm.doctype === 'Sales Invoice' ? 'Against Invoice' : 'Advance\nAgainst Invoice';
+            const default_request_type = frm.doctype === 'Sales Invoice' ? 'Against Invoice' : 'Advance';
             const dialog = new frappe.ui.Dialog({
                 title: __('Pine Labs POS Payment'),
                 fields: [
                     { label: __('Amount'), fieldname: 'amount', fieldtype: 'Currency', reqd: 1, default: default_amount },
+                    {
+                        label: __('Request Type'),
+                        fieldname: 'request_type',
+                        fieldtype: 'Select',
+                        options: request_type_options,
+                        default: default_request_type,
+                        reqd: 1,
+                        read_only: frm.doctype === 'Sales Invoice' ? 1 : 0,
+                    },
                     {
                         label: __('Payment Method'),
                         fieldname: 'pos_payment_method',
@@ -718,6 +722,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                             reference_doctype: frm.doctype,
                             reference_name: frm.doc.name,
                             amount: values.amount,
+                            request_type: values.request_type || default_request_type,
                             pos_payment_method: values.pos_payment_method || 'All Modes',
                             notes: values.notes,
                         },
@@ -728,7 +733,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                             dialog.hide();
                             frappe.msgprint({
                                 title: __('POS Payment Requested'),
-                                message: `<div><p>${__('Sales Invoice')}: <b>${frappe.utils.escape_html(data.sales_invoice || '')}</b></p><p>${__('Payment Intent')}: <b>${frappe.utils.escape_html(data.payment_intent || '')}</b></p><p>${__('Method')}: <b>${frappe.utils.escape_html(data.pos_payment_method || '')}</b></p><p>${__('POS Request')}: <b>${frappe.utils.escape_html(data.provider_pos_request_id || data.pos_request_status || '')}</b></p><p>${__('Terminal')}: <b>${frappe.utils.escape_html(data.terminal_id || '')}</b></p></div>`,
+                                message: `<div><p>${__('Sales Invoice')}: <b>${frappe.utils.escape_html(data.sales_invoice || '')}</b></p><p>${__('Payment Intent')}: <b>${frappe.utils.escape_html(data.payment_intent || '')}</b></p><p>${__('Request Type')}: <b>${frappe.utils.escape_html(data.request_type || '')}</b></p><p>${__('Method')}: <b>${frappe.utils.escape_html(data.pos_payment_method || '')}</b></p><p>${__('POS Request')}: <b>${frappe.utils.escape_html(data.provider_pos_request_id || data.pos_request_status || '')}</b></p><p>${__('Terminal')}: <b>${frappe.utils.escape_html(data.terminal_id || '')}</b></p></div>`,
                                 indicator: 'green'
                             });
                             const pos_timeout_minutes = Number(data.auto_cancel_duration || 5) + 1;

@@ -3,7 +3,10 @@ import hashlib
 import frappe
 from frappe.utils import cint, flt, now_datetime
 
-from payment_orchestrator.api.common.validation import ensure_payment_intent_action_permission
+from payment_orchestrator.api.common.validation import (
+    ensure_payment_intent_action_permission,
+    validate_patient_encounter_request,
+)
 from payment_orchestrator.logic import (
     allocate_available_amount,
     create_payment_entry_for_intent,
@@ -229,7 +232,7 @@ def get_pos_context():
 
 
 @frappe.whitelist()
-def request_pos_payment(sales_invoice, amount=None, pos_device_id=None, notes=None, make_default=0):
+def request_pos_payment(sales_invoice, amount=None, pos_device_id=None, notes=None, make_default=0, request_type=None):
     return request_pos_payment_from_reference(
         reference_doctype="Sales Invoice",
         reference_name=sales_invoice,
@@ -237,6 +240,7 @@ def request_pos_payment(sales_invoice, amount=None, pos_device_id=None, notes=No
         pos_device_id=pos_device_id,
         notes=notes,
         make_default=make_default,
+        request_type=request_type,
     )
 
 
@@ -249,6 +253,7 @@ def request_pos_payment_from_reference(
     notes=None,
     make_default=0,
     pos_payment_method=None,
+    request_type=None,
 ):
     _require_payment_role()
     settings = get_settings()
@@ -264,22 +269,26 @@ def request_pos_payment_from_reference(
     reference_doc = frappe.get_doc(reference_doctype, reference_name)
     if not reference_doc.has_permission("read"):
         frappe.throw(f"Not permitted to access this {reference_doctype}", frappe.PermissionError)
+    if reference_doctype == "Patient Encounter":
+        validate_patient_encounter_request(reference_doc)
 
-    invoice_name = resolve_pos_invoice(reference_doctype, reference_name)
-    if not invoice_name:
-        frappe.throw("Pine Labs POS needs a submitted Sales Invoice linked to this record")
+    request_type = resolve_pos_request_type(reference_doctype, request_type)
+    invoice_name = resolve_pos_invoice(reference_doctype, reference_name) if request_type == "Against Invoice" else None
+    if request_type == "Against Invoice" and not invoice_name:
+        frappe.throw("Pine Labs POS Against Invoice needs a submitted Sales Invoice linked to this record")
 
-    invoice = frappe.get_doc("Sales Invoice", invoice_name)
-    if invoice.docstatus != 1:
-        frappe.throw("POS payment can be requested only for a submitted Sales Invoice")
-    if not invoice.has_permission("read"):
-        frappe.throw("Not permitted to access this Sales Invoice", frappe.PermissionError)
+    invoice = frappe.get_doc("Sales Invoice", invoice_name) if invoice_name else None
+    if invoice:
+        if invoice.docstatus != 1:
+            frappe.throw("POS payment can be requested only for a submitted Sales Invoice")
+        if not invoice.has_permission("read"):
+            frappe.throw("Not permitted to access this Sales Invoice", frappe.PermissionError)
 
-    outstanding = flt(getattr(invoice, "outstanding_amount", 0))
+    outstanding = flt(getattr(invoice, "outstanding_amount", 0)) if invoice else 0
     amount = flt(amount or outstanding)
     if amount <= 0:
         frappe.throw("Amount must be greater than zero")
-    if amount > outstanding and not getattr(settings, "allow_overpayment", 0):
+    if invoice and amount > outstanding and not getattr(settings, "allow_overpayment", 0):
         frappe.throw("Amount cannot be greater than invoice outstanding amount")
 
     client_id = pos_device_id or getattr(settings, "default_pos_device_id", None) or getattr(settings, "pinelabs_client_id", None)
@@ -294,15 +303,18 @@ def request_pos_payment_from_reference(
     pos_payment_method, allowed_payment_mode = resolve_pos_payment_mode(settings, pos_payment_method)
 
     intent, context = create_payment_intent_doc(
-        reference_doctype="Sales Invoice",
-        reference_name=invoice.name,
+        reference_doctype=reference_doctype,
+        reference_name=reference_name,
         amount=amount,
-        request_type="Against Invoice",
+        request_type=request_type,
         request_channel="POS",
         notes=notes,
         gateway="Pine Labs",
         payment_mode="POS",
     )
+    if invoice and getattr(intent, "sales_invoice", None) != invoice.name:
+        intent.db_set("sales_invoice", invoice.name)
+        intent.reload()
     intent.db_set("provider_terminal_id", client_id)
     intent.db_set("pos_payment_method", pos_payment_method)
     intent.db_set("pos_allowed_payment_mode", allowed_payment_mode)
@@ -310,7 +322,7 @@ def request_pos_payment_from_reference(
 
     response, pos_request_id = PineLabsPOSAdapter(settings=settings).upload_transaction(
         intent,
-        invoice,
+        invoice or reference_doc,
         context,
         client_id,
         allowed_payment_mode=allowed_payment_mode,
@@ -335,7 +347,8 @@ def request_pos_payment_from_reference(
         "pos_payment_method": pos_payment_method,
         "pos_allowed_payment_mode": allowed_payment_mode,
         "auto_cancel_duration": cint(settings.pinelabs_auto_cancel_duration or 5),
-        "sales_invoice": invoice.name,
+        "sales_invoice": invoice.name if invoice else None,
+        "request_type": request_type,
         "reference_doctype": reference_doctype,
         "reference_name": reference_name,
     }
@@ -360,6 +373,17 @@ def resolve_pos_payment_mode(settings, pos_payment_method=None):
     if not code:
         frappe.throw(f"Set Pine Labs {label} Payment Mode Code in Payment Orchestrator Settings")
     return label, code
+
+
+def resolve_pos_request_type(reference_doctype, request_type=None):
+    request_type = request_type or ("Against Invoice" if reference_doctype == "Sales Invoice" else "Advance")
+    if request_type not in {"Advance", "Against Invoice"}:
+        frappe.throw("Invalid Pine Labs POS request type")
+    if reference_doctype == "Sales Invoice" and request_type != "Against Invoice":
+        frappe.throw("Sales Invoice POS payments can only be requested Against Invoice")
+    if reference_doctype not in {"Patient Encounter", "Sales Invoice"}:
+        frappe.throw("Pine Labs POS is available for Patient Encounter and Sales Invoice")
+    return request_type
 
 
 @frappe.whitelist()
@@ -495,6 +519,7 @@ def pinelabs_amount(response):
 @frappe.whitelist()
 def mock_pos_payment(reference_doctype, reference_name, amount=None, notes=None, pos_device_id=None, make_default=0):
     _require_payment_role()
+    frappe.only_for(("System Manager",))
     if not is_doctype_enabled(reference_doctype):
         frappe.throw(f"Payment Orchestrator is disabled for {reference_doctype}")
 
@@ -603,5 +628,6 @@ def ensure_mode_of_payment(mode):
 
 
 def set_default_pos_device(pos_device_id):
+    frappe.only_for(("System Manager",))
     frappe.db.set_single_value("Payment Orchestrator Settings", "default_pos_device_id", pos_device_id)
     frappe.db.set_single_value("Payment Orchestrator Settings", "pinelabs_client_id", pos_device_id)

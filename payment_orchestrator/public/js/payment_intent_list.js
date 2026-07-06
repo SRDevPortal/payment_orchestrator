@@ -50,10 +50,7 @@ frappe.listview_settings['Payment Intent'] = {
     formatters: {
         gateway(value, df, doc) {
             if (!value) return '';
-            const pos_method = doc.pos_payment_method ? ` ${frappe.utils.escape_html(doc.pos_payment_method)}` : '';
-            const mode = doc.payment_mode ? ` / ${frappe.utils.escape_html(doc.payment_mode)}${pos_method}` : '';
-            const env = doc.provider_mode ? ` / ${frappe.utils.escape_html(doc.provider_mode)}` : '';
-            return `<span class="po-list-gateway po-list-gateway-${frappe.scrub(value)}">${frappe.utils.escape_html(value)}${mode}${env}</span>`;
+            return `<span class="po-list-gateway po-list-gateway-${frappe.scrub(value)}">${frappe.utils.escape_html(value)}</span>`;
         },
 
         payment_status(value, df, doc) {

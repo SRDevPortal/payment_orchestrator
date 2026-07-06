@@ -378,8 +378,11 @@ def _resolve_paid_to_account(intent, settings):
 
 
 def _resolve_mode_of_payment(intent, settings):
-    if intent.request_channel == 'POS':
-        mode = settings.pos_mode_of_payment or 'Pine Labs POS'
+    if intent.request_channel == 'POS' or intent.payment_mode == 'POS':
+        if intent.gateway == 'Razorpay':
+            mode = 'Razorpay POS'
+        else:
+            mode = settings.pos_mode_of_payment or 'Pine Labs POS'
     elif intent.gateway == 'Pine Labs':
         mode = 'Pine Labs'
     else:

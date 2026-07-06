@@ -15,12 +15,14 @@ class PineLabsPOSAdapter:
 
     def upload_transaction(self, intent, invoice, context, client_id, allowed_payment_mode=None):
         amount = flt(intent.amount_requested)
+        invoice_number = getattr(invoice, "name", None) or intent.reference_name
+        invoice_total = flt(getattr(invoice, "grand_total", None) or amount)
         payload = {
             "TransactionNumber": intent.name,
             "SequenceNumber": 1,
             "AllowedPaymentMode": allowed_payment_mode or self.settings.pinelabs_allowed_payment_mode or "0",
             "Amount": int(round(amount * 100)),
-            "TotalInvoiceAmount": int(round(flt(invoice.grand_total or amount) * 100)),
+            "TotalInvoiceAmount": int(round(invoice_total * 100)),
             "UserID": self.settings.pinelabs_user_id or frappe.session.user,
             "MerchantID": _numeric_if_digits(self.settings.pinelabs_merchant_id),
             "SecurityToken": self.settings.get_password("pinelabs_security_token"),
@@ -29,8 +31,8 @@ class PineLabsPOSAdapter:
             "AutoCancelDurationInMinutes": int(self.settings.pinelabs_auto_cancel_duration or 5),
             "CustomerMobileNumber": context.get("mobile") or "",
             "CustomerEmailID": context.get("email") or "",
-            "InvoiceNumber": invoice.name,
-            "invoicenumber": invoice.name,
+            "InvoiceNumber": invoice_number,
+            "invoicenumber": invoice_number,
         }
         response = self.client.upload_billed_transaction(payload)
         pos_request_id = self.extract_pos_request_id(response)

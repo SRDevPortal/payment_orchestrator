@@ -36,8 +36,23 @@
     flex-wrap: wrap;
 }
 
-.po-intent-status-row {
+.po-intent-status-row,
+.po-intent-status-flow {
     margin-top: 12px;
+}
+
+.po-intent-status-flow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.po-status-arrow {
+    color: #9ca3af;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
 }
 
 .po-status-badge {
@@ -176,6 +191,15 @@
 .po-intent-link span {
     color: #6b7280;
     font-size: 11px;
+}
+
+.po-intent-link a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.po-intent-link a:hover {
+    text-decoration: underline;
 }
 
 .po-intent-link b {

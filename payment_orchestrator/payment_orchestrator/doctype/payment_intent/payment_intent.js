@@ -35,8 +35,10 @@ function render_payment_intent_overview(frm) {
     const payload = parse_provider_payload(doc.provider_payload_snapshot);
     const txn = extract_transaction_details(payload);
     const status = classify_intent_status(doc);
+    const received = classify_received_status(doc, status);
     const provider = classify_provider_status(doc);
     const error_hint = provider.kind === 'danger' ? payment_error_hint(provider.label) : '';
+    const links = payment_intent_links(doc);
 
     const html = `
         <div class="po-intent-overview">
@@ -53,11 +55,11 @@ function render_payment_intent_overview(frm) {
                     ${badge(doc.provider_mode || 'Mode', doc.provider_mode === 'Live' ? 'danger-soft' : 'info-soft')}
                 </div>
             </div>
-            <div class="po-badge-row po-intent-status-row">
-                ${badge(doc.status || 'Draft', status.kind)}
-                ${badge(doc.allocation_status || 'Unallocated', allocation_badge_kind(doc.allocation_status))}
-                ${badge(provider.label, provider.kind)}
-            </div>
+            ${status_flow([
+                [provider.label, provider.kind],
+                [received.label, received.kind],
+                [doc.allocation_status || 'Unallocated', allocation_badge_kind(doc.allocation_status)],
+            ])}
             ${error_hint ? `<div class="po-intent-alert po-intent-alert-danger">${escape_html(error_hint)}</div>` : ''}
             <div class="po-intent-grid">
                 ${metric(__('Requested'), format_currency_value(doc.amount_requested, doc.currency))}
@@ -66,9 +68,7 @@ function render_payment_intent_overview(frm) {
                 ${metric(__('Unallocated'), format_currency_value(doc.amount_unallocated, doc.currency))}
             </div>
             <div class="po-intent-links">
-                ${link_item(__('Sales Invoice'), 'Sales Invoice', doc.sales_invoice)}
-                ${link_item(__('Payment Entry'), 'Payment Entry', doc.payment_entry)}
-                ${link_item(__('Reference'), doc.reference_doctype, doc.reference_name)}
+                ${links.join('')}
             </div>
             ${transaction_panel(doc, txn)}
         </div>
@@ -262,6 +262,12 @@ function classify_intent_status(doc) {
     return { kind: 'pending' };
 }
 
+function classify_received_status(doc, fallback) {
+    const amount_paid = Number(doc.amount_paid || 0);
+    if (amount_paid > 0) return { label: __('Paid'), kind: 'success' };
+    return { label: doc.status || __('Draft'), kind: fallback.kind };
+}
+
 function classify_provider_status(doc) {
     const raw = doc.pos_failure_reason || doc.payment_status || doc.pos_request_status || doc.qr_status || doc.status || '';
     const value = String(raw || '').trim();
@@ -312,6 +318,17 @@ function badge(label, kind) {
     return `<span class="po-status-badge po-status-${escape_attr(kind || 'neutral')}">${escape_html(label || '')}</span>`;
 }
 
+function status_flow(items) {
+    return `
+        <div class="po-intent-status-flow">
+            ${items.map(([label, kind], index) => `
+                ${index ? '<span class="po-status-arrow" aria-hidden="true">&rarr;</span>' : ''}
+                ${badge(label, kind)}
+            `).join('')}
+        </div>
+    `;
+}
+
 function metric(label, value) {
     return `
         <div class="po-intent-metric">
@@ -324,7 +341,34 @@ function metric(label, value) {
 function link_item(label, doctype, name) {
     if (!doctype || !name) return '';
     const href = `/app/${frappe.router.slug(doctype)}/${encodeURIComponent(name)}`;
-    return `<a class="po-intent-link" href="${href}"><span>${escape_html(label)}</span><b>${escape_html(name)}</b></a>`;
+    return `<div class="po-intent-link"><span>${escape_html(label)}</span><a href="${href}"><b>${escape_html(name)}</b></a></div>`;
+}
+
+function payment_intent_links(doc) {
+    const seen = new Set();
+    const links = [];
+
+    function add(label, doctype, name) {
+        if (!doctype || !name) return;
+        const key = `${doctype}::${name}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        links.push(link_item(label, doctype, name));
+    }
+
+    add(reference_link_label(doc.reference_doctype), doc.reference_doctype, doc.reference_name);
+    add(__('Sales Invoice'), 'Sales Invoice', doc.sales_invoice);
+    add(__('Payment Entry'), 'Payment Entry', doc.payment_entry);
+    return links;
+}
+
+function reference_link_item(doctype, name) {
+    return link_item(reference_link_label(doctype), doctype, name);
+}
+
+function reference_link_label(doctype) {
+    if (doctype === 'Patient Encounter') return __('Encounter');
+    return __(doctype || 'Reference');
 }
 
 function transaction_panel(doc, txn) {
@@ -360,10 +404,19 @@ function transaction_panel(doc, txn) {
 
 function format_currency_value(value, currency) {
     const amount = Number(value || 0);
-    if (frappe.format) {
-        return frappe.format(amount, { fieldtype: 'Currency', options: currency || 'INR' });
+    const symbol = currency_symbol(currency || 'INR');
+    return `${symbol} ${amount.toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    })}`;
+}
+
+function currency_symbol(currency) {
+    if (currency === 'INR') return '₹';
+    if (frappe.boot && frappe.boot.sysdefaults && frappe.boot.sysdefaults.currency === currency) {
+        return frappe.boot.sysdefaults.currency_symbol || currency;
     }
-    return `${currency || 'INR'} ${amount.toFixed(2)}`;
+    return currency || '';
 }
 
 function format_pinelabs_date_time(date, time) {
