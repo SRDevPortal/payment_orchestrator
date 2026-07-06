@@ -1,6 +1,10 @@
 import frappe
 from frappe.utils import flt
 
+from payment_orchestrator.api.common.validation import (
+    ensure_payment_action_permission,
+    ensure_payment_intent_action_permission,
+)
 from payment_orchestrator.logic import apply_unpaid_terminal_provider_status
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
 from payment_orchestrator.provider.razorpay.payment_link import RazorpayPaymentLinkAdapter
@@ -11,6 +15,7 @@ from payment_orchestrator.utils import get_settings, is_razorpay_payment_link_en
 
 @frappe.whitelist()
 def create_payment_link(reference_doctype, reference_name, amount, request_type=None, request_channel=None, notes=None):
+    ensure_payment_action_permission()
     amount = flt(amount)
     if amount <= 0:
         frappe.throw("Amount must be greater than zero")
@@ -50,6 +55,7 @@ def create_payment_link(reference_doctype, reference_name, amount, request_type=
 
 @frappe.whitelist()
 def create_qr_code(reference_doctype, reference_name, amount, request_type=None, notes=None):
+    ensure_payment_action_permission()
     if reference_doctype not in ("Patient Encounter", "Sales Order", "Sales Invoice"):
         frappe.throw("Razorpay QR Code is available for Patient Encounter, Sales Order, and Sales Invoice")
     amount = flt(amount)
@@ -92,6 +98,7 @@ def create_qr_code(reference_doctype, reference_name, amount, request_type=None,
 @frappe.whitelist()
 def fetch_payment_link(payment_intent):
     intent = frappe.get_doc("Payment Intent", payment_intent)
+    ensure_payment_intent_action_permission(intent)
     if intent.gateway != "Razorpay":
         frappe.throw("Payment Intent is not a Razorpay payment link")
     if not intent.provider_link_id:
@@ -108,6 +115,7 @@ def fetch_payment_link(payment_intent):
 @frappe.whitelist()
 def fetch_qr_code(payment_intent):
     intent = frappe.get_doc("Payment Intent", payment_intent)
+    ensure_payment_intent_action_permission(intent)
     if intent.gateway != "Razorpay":
         frappe.throw("Payment Intent is not a Razorpay QR Code")
     if not intent.provider_qr_id:
@@ -124,6 +132,7 @@ def fetch_qr_code(payment_intent):
 @frappe.whitelist()
 def close_qr_code(payment_intent):
     intent = frappe.get_doc("Payment Intent", payment_intent)
+    ensure_payment_intent_action_permission(intent)
     if intent.gateway != "Razorpay":
         frappe.throw("Payment Intent is not a Razorpay QR Code")
     if not intent.provider_qr_id:
@@ -142,7 +151,9 @@ def refund_payment(payment_intent, amount=None, notes=None):
     settings = get_settings()
     if not settings.enable_refunds:
         frappe.throw("Refunds are disabled in settings")
+    ensure_payment_action_permission()
     intent = frappe.get_doc("Payment Intent", payment_intent)
+    ensure_payment_intent_action_permission(intent)
     if intent.gateway != "Razorpay":
         frappe.throw("Refunds through this endpoint are available only for Razorpay payments")
     if not intent.provider_payment_id:

@@ -12,6 +12,8 @@ from payment_orchestrator.api.pinelabs import (
     payment_link_success_payload as _pinelabs_payment_link_success_payload,
     sync_payment_link as _sync_pinelabs_payment_link,
 )
+from payment_orchestrator.provider.pinelabs.online import PineLabsOnlineClient
+from payment_orchestrator.provider.pinelabs.pos import PineLabsPOSAdapter
 from payment_orchestrator.utils import (
     get_settings,
     is_pinelabs_postback_enabled,
@@ -131,15 +133,21 @@ def pinelabs():
         return _pinelabs_browser_callback_response(result, data, is_browser_callback)
 
     intent = frappe.get_doc('Payment Intent', intent_name)
-    response = {
+    callback_response = {
         'ResponseCode': int(data.get('ResponseCode') or 0),
         'ResponseMessage': data.get('ResponseMessage') or data.get('Status') or '',
         'PlutusTransactionReferenceID': ptrid,
         'Amount': data.get('Amount'),
         'TransactionData': [{'Tag': key, 'Value': value} for key, value in data.items()],
     }
+    response = _verified_pinelabs_pos_response(intent, event, callback_response)
+    if not response:
+        result = {'ok': False, 'payment_intent': intent.name, 'status': 'Verification failed'}
+        return _pinelabs_browser_callback_response(result, data, is_browser_callback)
 
-    if response['ResponseCode'] == 0 and 'APPROVED' in response['ResponseMessage'].upper():
+    response_code = int(response.get('ResponseCode') or 0)
+    response_message = response.get('ResponseMessage') or ''
+    if response_code == 0 and 'APPROVED' in response_message.upper():
         payment_entry = _apply_pinelabs_success(intent, response)
         event.db_set('processing_status', 'Processed')
         event.db_set('payment_intent', intent.name)
@@ -147,13 +155,13 @@ def pinelabs():
         result = {'ok': True, 'payment_intent': intent.name, 'payment_entry': payment_entry}
         return _pinelabs_browser_callback_response(result, data, is_browser_callback)
 
-    intent.db_set('payment_status', response['ResponseMessage'])
-    intent.db_set('pos_request_status', response['ResponseMessage'])
-    intent.db_set('pos_failure_reason', response['ResponseMessage'])
+    intent.db_set('payment_status', response_message)
+    intent.db_set('pos_request_status', response_message)
+    intent.db_set('pos_failure_reason', response_message)
     event.db_set('processing_status', 'Failed')
     event.db_set('payment_intent', intent.name)
-    event.db_set('error_message', response['ResponseMessage'])
-    result = {'ok': True, 'payment_intent': intent.name, 'status': response['ResponseMessage']}
+    event.db_set('error_message', response_message)
+    result = {'ok': True, 'payment_intent': intent.name, 'status': response_message}
     return _pinelabs_browser_callback_response(result, data, is_browser_callback)
 
 
@@ -276,10 +284,10 @@ def _is_pinelabs_payment_link_payload(data):
 
 
 def _process_pinelabs_payment_link_event(data, event):
-    link_data = _normalize_pinelabs_payment_link_event(data)
+    callback_link_data = _normalize_pinelabs_payment_link_event(data)
     intent_name = (
-        link_data.get('merchant_payment_link_reference')
-        or frappe.db.get_value('Payment Intent', {'provider_link_id': link_data.get('payment_link_id')}, 'name')
+        callback_link_data.get('merchant_payment_link_reference')
+        or frappe.db.get_value('Payment Intent', {'provider_link_id': callback_link_data.get('payment_link_id')}, 'name')
     )
     if not intent_name or not frappe.db.exists('Payment Intent', intent_name):
         event.db_set('processing_status', 'Ignored')
@@ -287,6 +295,10 @@ def _process_pinelabs_payment_link_event(data, event):
         return {'ok': True, 'ignored': True}
 
     intent = frappe.get_doc('Payment Intent', intent_name)
+    link_data = _verified_pinelabs_payment_link_data(intent, event, callback_link_data)
+    if not link_data:
+        return {'ok': False, 'payment_intent': intent.name, 'status': 'Verification failed'}
+
     _sync_pinelabs_payment_link(intent, link_data)
     intent.reload()
     event.db_set('payment_intent', intent.name)
@@ -314,6 +326,60 @@ def _process_pinelabs_payment_link_event(data, event):
 
     event.db_set('processing_status', 'Processed')
     return {'ok': True, 'payment_intent': intent.name, 'status': link_data.get('status')}
+
+
+def _verified_pinelabs_pos_response(intent, event, callback_response):
+    try:
+        response = PineLabsPOSAdapter(settings=get_settings()).fetch_status(intent)
+    except Exception:
+        event.db_set('processing_status', 'Failed')
+        event.db_set('payment_intent', intent.name)
+        event.db_set('error_message', 'Unable to verify Pine Labs POS callback with provider\n' + frappe.get_traceback())
+        frappe.db.commit()
+        return None
+
+    response['PlutusTransactionReferenceID'] = (
+        response.get('PlutusTransactionReferenceID')
+        or callback_response.get('PlutusTransactionReferenceID')
+        or intent.provider_pos_request_id
+    )
+    return response
+
+
+def _verified_pinelabs_payment_link_data(intent, event, callback_link_data):
+    link_id = callback_link_data.get('payment_link_id') or intent.provider_link_id
+    if not link_id:
+        event.db_set('processing_status', 'Failed')
+        event.db_set('payment_intent', intent.name)
+        event.db_set('error_message', 'Unable to verify Pine Labs payment link callback without payment_link_id')
+        return None
+
+    try:
+        fetched = PineLabsOnlineClient(settings=get_settings()).get_payment_link(link_id)
+    except Exception:
+        event.db_set('processing_status', 'Failed')
+        event.db_set('payment_intent', intent.name)
+        event.db_set('error_message', 'Unable to verify Pine Labs payment link callback with provider\n' + frappe.get_traceback())
+        frappe.db.commit()
+        return None
+
+    verified = _normalize_pinelabs_payment_link_event(fetched)
+    provider_reference = verified.get('merchant_payment_link_reference')
+    if intent.provider_link_id and link_id != intent.provider_link_id:
+        event.db_set('processing_status', 'Failed')
+        event.db_set('payment_intent', intent.name)
+        event.db_set('error_message', 'Pine Labs callback payment_link_id does not match Payment Intent')
+        return None
+    if provider_reference and provider_reference != intent.name:
+        event.db_set('processing_status', 'Failed')
+        event.db_set('payment_intent', intent.name)
+        event.db_set('error_message', 'Verified Pine Labs payment link belongs to a different Payment Intent')
+        return None
+    if not verified.get('payment_link_id'):
+        verified['payment_link_id'] = link_id
+    if not verified.get('merchant_payment_link_reference'):
+        verified['merchant_payment_link_reference'] = intent.name
+    return verified
 
 
 def _normalize_pinelabs_payment_link_event(data):

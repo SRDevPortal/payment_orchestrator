@@ -1,5 +1,6 @@
 import frappe
 
+from payment_orchestrator.api.common.validation import ensure_payment_action_permission
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
 from payment_orchestrator.utils import (
     get_flag,
@@ -43,6 +44,7 @@ def get_settings_context():
 
 @frappe.whitelist()
 def test_provider_connection():
+    ensure_payment_action_permission()
     settings = frappe.get_single('Payment Orchestrator Settings')
     mode = getattr(settings, 'razorpay_payment_link_mode', None) or 'Test'
     client = RazorpayClient(settings=settings, mode=mode)

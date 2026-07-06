@@ -3,6 +3,8 @@ from frappe.utils import flt
 
 from payment_orchestrator.utils import get_settings
 
+PAYMENT_ACTION_ROLES = {"Accounts Manager", "Accounts User", "System Manager"}
+
 
 def allow_partial(settings, reference_doctype):
     mapping = {
@@ -35,6 +37,21 @@ def ensure_reference_read_permission(reference_doctype, reference_name):
     doc = frappe.get_doc(reference_doctype, reference_name)
     if not doc.has_permission("read"):
         frappe.throw(f"Not permitted to access {reference_doctype} {reference_name}", frappe.PermissionError)
+
+
+def ensure_payment_action_permission():
+    roles = set(frappe.get_roles(frappe.session.user))
+    if not roles.intersection(PAYMENT_ACTION_ROLES):
+        frappe.throw("Not permitted to perform payment actions", frappe.PermissionError)
+
+
+def ensure_payment_intent_read_permission(intent):
+    ensure_reference_read_permission(intent.reference_doctype, intent.reference_name)
+
+
+def ensure_payment_intent_action_permission(intent):
+    ensure_payment_action_permission()
+    ensure_payment_intent_read_permission(intent)
 
 
 def validate_patient_encounter_request(doc):

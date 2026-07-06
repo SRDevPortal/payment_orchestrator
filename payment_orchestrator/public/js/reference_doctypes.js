@@ -245,6 +245,33 @@ payment_orchestrator.download_url = function(url, filename) {
         });
 };
 
+payment_orchestrator.safe_external_url = function(value) {
+    const url = String(value || '').trim();
+    if (!url) return '';
+    if (/^https?:\/\//i.test(url)) return url;
+    return '';
+};
+
+payment_orchestrator.render_dashboard_intent = function(row) {
+    const payment_link_url = payment_orchestrator.safe_external_url(row.payment_link_url);
+    const qr_code_url = payment_orchestrator.safe_external_url(row.qr_code_url);
+    return `
+        <div style="padding:8px 0;border-bottom:1px solid #eee;">
+            <div><b>${payment_orchestrator.escape_html(row.name)}</b> - ${payment_orchestrator.escape_html(row.status)}</div>
+            <div style="font-size:12px;color:#666;">
+                ${payment_orchestrator.escape_html(row.gateway || '')}
+                ${payment_orchestrator.escape_html(row.payment_mode || '')}
+                | ${payment_orchestrator.escape_html(row.request_type || '')}
+                | Requested: ${payment_orchestrator.escape_html(row.amount_requested)}
+                | Paid: ${payment_orchestrator.escape_html(row.amount_paid)}
+                | Allocated: ${payment_orchestrator.escape_html(row.amount_allocated)}
+            </div>
+            ${payment_link_url ? `<div style="font-size:12px;"><a href="${payment_orchestrator.escape_html(payment_link_url)}" target="_blank" rel="noopener noreferrer">Open Payment Link</a></div>` : ''}
+            ${qr_code_url ? `<div style="font-size:12px;"><a href="${payment_orchestrator.escape_html(qr_code_url)}" target="_blank" rel="noopener noreferrer">Open QR Code</a></div>` : ''}
+        </div>
+    `;
+};
+
 payment_orchestrator.payment_result_button = function(label, action, value, extra_attrs) {
     const attrs = [
         `data-po-action="${payment_orchestrator.escape_html(action)}"`,
@@ -507,7 +534,7 @@ payment_orchestrator.render_dashboard = function(frm) {
                     <hr>
                     <div><b>Recent Payment Intents</b></div>
                     <div style="margin-top:8px;max-height:220px;overflow:auto;">
-                        ${intents.length ? intents.map(row => `<div style="padding:8px 0;border-bottom:1px solid #eee;"><div><b>${row.name}</b> - ${row.status}</div><div style="font-size:12px;color:#666;">${row.gateway || ''} ${row.payment_mode || ''} | ${row.request_type} | Requested: ${row.amount_requested} | Paid: ${row.amount_paid} | Allocated: ${row.amount_allocated}</div>${row.payment_link_url ? `<div style="font-size:12px;"><a href="${row.payment_link_url}" target="_blank">Open Payment Link</a></div>` : ''}${row.qr_code_url ? `<div style="font-size:12px;"><a href="${row.qr_code_url}" target="_blank">Open QR Code</a></div>` : ''}</div>`).join('') : '<div style="color:#666;">No payment intents yet.</div>'}
+                        ${intents.length ? intents.map(payment_orchestrator.render_dashboard_intent).join('') : '<div style="color:#666;">No payment intents yet.</div>'}
                     </div>
                 </div>
             `;

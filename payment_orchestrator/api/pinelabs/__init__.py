@@ -3,6 +3,7 @@ import hashlib
 import frappe
 from frappe.utils import cint, flt, now_datetime
 
+from payment_orchestrator.api.common.validation import ensure_payment_intent_action_permission
 from payment_orchestrator.logic import (
     allocate_available_amount,
     create_payment_entry_for_intent,
@@ -27,6 +28,7 @@ def _require_payment_role():
 
 @frappe.whitelist()
 def create_payment_link(reference_doctype, reference_name, amount, request_type=None, request_channel=None, notes=None):
+    _require_payment_role()
     amount = flt(amount)
     if amount <= 0:
         frappe.throw("Amount must be greater than zero")
@@ -71,6 +73,7 @@ def create_payment_link(reference_doctype, reference_name, amount, request_type=
 def fetch_payment_link(payment_intent):
     _require_payment_role()
     intent = frappe.get_doc("Payment Intent", payment_intent)
+    ensure_payment_intent_action_permission(intent)
     if intent.gateway != "Pine Labs":
         frappe.throw("Payment Intent is not a Pine Labs payment link")
     if not intent.provider_link_id:
@@ -363,6 +366,7 @@ def resolve_pos_payment_mode(settings, pos_payment_method=None):
 def fetch_pos_payment_status(payment_intent):
     _require_payment_role()
     intent = frappe.get_doc("Payment Intent", payment_intent)
+    ensure_payment_intent_action_permission(intent)
     if intent.request_channel != "POS":
         frappe.throw("Payment Intent is not a POS request")
     if not intent.provider_pos_request_id:
@@ -458,8 +462,11 @@ def _is_valid_pos_request_id(pos_request_id):
 
 def apply_pos_success(intent, response):
     amount = pinelabs_amount(response) or flt(intent.amount_requested)
+    settings = get_settings()
+    if amount > flt(intent.amount_requested or 0) and not getattr(settings, "allow_overpayment", 0):
+        frappe.throw("Provider payment amount is greater than requested amount")
     payment_id = str(response.get("PlutusTransactionReferenceID") or intent.provider_pos_request_id)
-    ensure_mode_of_payment(getattr(get_settings(), "pos_mode_of_payment", None) or "Pine Labs POS")
+    ensure_mode_of_payment(getattr(settings, "pos_mode_of_payment", None) or "Pine Labs POS")
     intent.db_set("gateway", intent.gateway or "Pine Labs")
     intent.db_set("payment_mode", intent.payment_mode or "POS")
     intent.db_set("provider_payment_id", payment_id)
@@ -479,7 +486,7 @@ def apply_pos_success(intent, response):
 def pinelabs_amount(response):
     for row in response.get("TransactionData") or []:
         if row.get("Tag") == "Amount":
-            return flt(row.get("Value")) / (100 if flt(row.get("Value")) > 1000 else 1)
+            return flt(row.get("Value")) / 100
     if response.get("Amount"):
         return flt(response.get("Amount")) / 100
     return None

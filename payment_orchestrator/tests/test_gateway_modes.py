@@ -6,6 +6,7 @@ from unittest.mock import patch
 from payment_orchestrator.provider.pinelabs.payment_link import PineLabsPaymentLinkAdapter
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
 from payment_orchestrator.provider.razorpay.qr_code import RazorpayQRCodeAdapter
+from payment_orchestrator.api.pinelabs import pinelabs_amount
 from payment_orchestrator.logic import _extract_payment_entity
 from payment_orchestrator.payment_orchestrator.doctype.payment_orchestrator_settings.payment_orchestrator_settings import (
     PINELABS_BASE_URL,
@@ -355,6 +356,18 @@ class RazorpayWebhookPayloadTests(TestCase):
         self.assertEqual(entity["qr_code_id"], "qr_123")
         self.assertEqual(entity["amount"], 200)
         self.assertEqual(entity["notes"]["payment_intent"], "PI-QR-0001")
+
+
+class PineLabsAmountTests(TestCase):
+    def test_transaction_data_amount_is_minor_units(self):
+        response = {"TransactionData": [{"Tag": "Amount", "Value": "500"}]}
+
+        self.assertEqual(pinelabs_amount(response), 5)
+
+    def test_top_level_amount_is_minor_units(self):
+        response = {"Amount": "12550"}
+
+        self.assertEqual(pinelabs_amount(response), 125.5)
 
 
 class RazorpayQRCodeAdapterTests(TestCase):
