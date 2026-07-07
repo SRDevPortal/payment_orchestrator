@@ -7,6 +7,9 @@ import frappe
 from frappe.utils import now_datetime, get_url
 
 
+REQUIRED_MODES_OF_PAYMENT = ("Razorpay", "Razorpay POS", "Pine Labs", "Pine Labs POS")
+
+
 def get_settings():
     return frappe.get_single('Payment Orchestrator Settings')
 
@@ -158,6 +161,42 @@ def verify_razorpay_webhook_signature(payload: str, signature: str, secret: str)
 
 def get_public_webhook_url(path: str = '/api/method/payment_orchestrator.api.webhooks.razorpay') -> str:
     return get_url(path)
+
+
+def ensure_mode_of_payment(mode: str):
+    mode = (mode or '').strip()
+    if not mode:
+        return None
+
+    if not frappe.db.exists('Mode of Payment', mode):
+        frappe.get_doc({
+            'doctype': 'Mode of Payment',
+            'mode_of_payment': mode,
+            'enabled': 1,
+        }).insert(ignore_permissions=True)
+    return mode
+
+
+def ensure_required_modes_of_payment():
+    return [ensure_mode_of_payment(mode) for mode in REQUIRED_MODES_OF_PAYMENT]
+
+
+def mode_of_payment_account(company: str, mode: str):
+    if not company or not mode:
+        return None
+
+    account = frappe.db.get_value(
+        'Mode of Payment Account',
+        {'parent': mode, 'company': company},
+        'default_account',
+    )
+    if not account and frappe.get_meta('Mode of Payment Account').has_field('account'):
+        account = frappe.db.get_value(
+            'Mode of Payment Account',
+            {'parent': mode, 'company': company},
+            'account',
+        )
+    return account
 
 
 def now_ts():

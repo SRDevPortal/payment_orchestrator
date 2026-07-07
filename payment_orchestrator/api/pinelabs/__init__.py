@@ -17,7 +17,15 @@ from payment_orchestrator.provider.pinelabs.online import PineLabsOnlineClient
 from payment_orchestrator.provider.pinelabs.payment_link import PineLabsPaymentLinkAdapter
 from payment_orchestrator.provider.pinelabs.pos import PineLabsPOSAdapter
 from payment_orchestrator.services import create_payment_intent_doc, update_reference_payment_summary
-from payment_orchestrator.utils import as_json, get_flag, get_settings, is_doctype_enabled, is_pinelabs_payment_link_enabled, is_pinelabs_pos_enabled
+from payment_orchestrator.utils import (
+    as_json,
+    ensure_mode_of_payment,
+    get_flag,
+    get_settings,
+    is_doctype_enabled,
+    is_pinelabs_payment_link_enabled,
+    is_pinelabs_pos_enabled,
+)
 
 
 PAYMENT_ROLES = ("Accounts Manager", "Accounts User", "System Manager")
@@ -620,11 +628,6 @@ def resolve_pos_invoice(reference_doctype, reference_name):
 
 def resolve_demo_invoice(reference_doctype, reference_name):
     return resolve_pos_invoice(reference_doctype, reference_name)
-
-
-def ensure_mode_of_payment(mode):
-    if mode and not frappe.db.exists("Mode of Payment", mode):
-        frappe.get_doc({"doctype": "Mode of Payment", "mode_of_payment": mode, "enabled": 1}).insert(ignore_permissions=True)
 
 
 def set_default_pos_device(pos_device_id):

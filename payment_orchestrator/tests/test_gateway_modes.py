@@ -28,6 +28,7 @@ from payment_orchestrator.payment_orchestrator.doctype.payment_orchestrator_sett
     PaymentOrchestratorSettings,
 )
 from payment_orchestrator.utils import (
+    ensure_mode_of_payment,
     get_provider_mode_for_gateway_mode,
     is_gateway_enabled,
     is_gateway_mode_enabled,
@@ -149,7 +150,10 @@ class ModeOfPaymentResolutionTests(TestCase):
             db=SimpleNamespace(exists=lambda *args, **kwargs: True),
             get_doc=lambda *args, **kwargs: None,
         )
-        with patch("payment_orchestrator.logic.frappe", fake_frappe):
+        with patch("payment_orchestrator.logic.frappe", fake_frappe), patch(
+            "payment_orchestrator.logic.ensure_mode_of_payment",
+            side_effect=lambda mode: mode,
+        ):
             return _resolve_mode_of_payment(intent, settings)
 
     def test_razorpay_link_and_qr_use_razorpay_mode_of_payment(self):
@@ -175,6 +179,47 @@ class ModeOfPaymentResolutionTests(TestCase):
             self._resolve(self._intent("Pine Labs", "POS"), self._settings()),
             "Pine Labs POS",
         )
+
+
+class EnsureModeOfPaymentTests(TestCase):
+    def test_empty_mode_is_ignored(self):
+        fake_frappe = SimpleNamespace(
+            db=SimpleNamespace(exists=lambda *args, **kwargs: False),
+            get_doc=lambda *args, **kwargs: None,
+        )
+
+        with patch("payment_orchestrator.utils.frappe", fake_frappe):
+            self.assertIsNone(ensure_mode_of_payment(""))
+
+    def test_existing_mode_is_returned_without_insert(self):
+        fake_frappe = SimpleNamespace(
+            db=SimpleNamespace(exists=lambda *args, **kwargs: True),
+            get_doc=lambda *args, **kwargs: self.fail("get_doc should not be called"),
+        )
+
+        with patch("payment_orchestrator.utils.frappe", fake_frappe):
+            self.assertEqual(ensure_mode_of_payment("Razorpay"), "Razorpay")
+
+    def test_missing_mode_is_created_enabled(self):
+        inserted = []
+
+        class FakeDoc(dict):
+            def insert(self, ignore_permissions=False):
+                inserted.append((dict(self), ignore_permissions))
+
+        fake_frappe = SimpleNamespace(
+            db=SimpleNamespace(exists=lambda *args, **kwargs: False),
+            get_doc=lambda values: FakeDoc(values),
+        )
+
+        with patch("payment_orchestrator.utils.frappe", fake_frappe):
+            self.assertEqual(ensure_mode_of_payment("Pine Labs POS"), "Pine Labs POS")
+
+        self.assertEqual(inserted, [({
+            "doctype": "Mode of Payment",
+            "mode_of_payment": "Pine Labs POS",
+            "enabled": 1,
+        }, True)])
 
 
 class WhatsAppPaymentNotificationTests(TestCase):

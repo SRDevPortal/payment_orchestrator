@@ -6,7 +6,7 @@ from payment_orchestrator.services import (
     get_allocation_targets,
     update_reference_payment_summary,
 )
-from payment_orchestrator.utils import as_json, get_settings
+from payment_orchestrator.utils import as_json, ensure_mode_of_payment, get_settings
 
 
 def process_provider_payment_success(payload, event_doc=None):
@@ -387,13 +387,7 @@ def _resolve_mode_of_payment(intent, settings):
         mode = 'Pine Labs'
     else:
         mode = settings.default_mode_of_payment or 'Razorpay'
-    if not frappe.db.exists('Mode of Payment', mode):
-        frappe.get_doc({
-            'doctype': 'Mode of Payment',
-            'mode_of_payment': mode,
-            'enabled': 1,
-        }).insert(ignore_permissions=True)
-    return mode
+    return ensure_mode_of_payment(mode)
 
 
 def _session_user():

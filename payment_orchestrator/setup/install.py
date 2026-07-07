@@ -4,6 +4,8 @@ import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 from frappe.utils import cint
 
+from payment_orchestrator.utils import ensure_required_modes_of_payment
+
 
 LINKED_REFERENCE_DOCTYPE = "Payment Intent"
 SALES_INVOICE_PAYMENT_SUMMARY_ANCHOR = "si_support_actions_html"
@@ -229,10 +231,4 @@ def _enabled_setting(settings, fieldname: str) -> int:
 
 
 def ensure_default_modes_of_payment():
-    for mode in ("Razorpay", "Razorpay POS", "Pine Labs", "Pine Labs POS"):
-        if not frappe.db.exists("Mode of Payment", mode):
-            frappe.get_doc({
-                "doctype": "Mode of Payment",
-                "mode_of_payment": mode,
-                "enabled": 1,
-            }).insert(ignore_permissions=True)
+    ensure_required_modes_of_payment()

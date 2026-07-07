@@ -1,6 +1,12 @@
 import frappe
 
-from payment_orchestrator.utils import get_flag, get_public_webhook_url, get_settings
+from payment_orchestrator.utils import (
+	REQUIRED_MODES_OF_PAYMENT,
+	get_flag,
+	get_public_webhook_url,
+	get_settings,
+	mode_of_payment_account,
+)
 
 
 @frappe.whitelist()
@@ -48,6 +54,7 @@ def get_setup_status():
 		"enable_on_patient_encounter": settings.enable_on_patient_encounter,
 		"enable_on_sales_order": settings.enable_on_sales_order,
 		"enable_on_sales_invoice": settings.enable_on_sales_invoice,
+		"modes_of_payment": get_mode_of_payment_statuses(settings.company),
 		"counts": {
 			"payment_intents": frappe.db.count("Payment Intent"),
 			"payment_allocations": frappe.db.count("Payment Allocation"),
@@ -114,6 +121,22 @@ def smoke_check():
 		"message": get_public_webhook_url('/api/method/payment_orchestrator.api.webhooks.pinelabs'),
 	})
 
+	for row in get_mode_of_payment_statuses(settings.company):
+		checks.append({
+			"name": f"mode-of-payment:{row['mode']}",
+			"ok": row["exists"],
+			"message": f"{row['mode']} exists" if row["exists"] else f"{row['mode']} missing",
+		})
+		checks.append({
+			"name": f"mode-of-payment-account:{row['mode']}",
+			"ok": True,
+			"message": (
+				f"{row['mode']} mapped to {row['account']}"
+				if row["account_mapped"]
+				else f"{row['mode']} has no account mapping for {settings.company or 'company'}"
+			),
+		})
+
 	for doctype in ["CRM Lead", "Patient Encounter", "Sales Order", "Sales Invoice"]:
 		exists = bool(frappe.db.exists("DocType", doctype))
 		checks.append({
@@ -126,3 +149,17 @@ def smoke_check():
 		"ok": all(item["ok"] for item in checks if not item["name"].startswith("doctype-exists:Patient Encounter")),
 		"checks": checks,
 	}
+
+
+def get_mode_of_payment_statuses(company=None):
+	rows = []
+	for mode in REQUIRED_MODES_OF_PAYMENT:
+		exists = bool(frappe.db.exists("Mode of Payment", mode))
+		account = mode_of_payment_account(company, mode) if exists and company else None
+		rows.append({
+			"mode": mode,
+			"exists": exists,
+			"account": account,
+			"account_mapped": bool(account),
+		})
+	return rows
