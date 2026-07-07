@@ -4,7 +4,8 @@ payment_orchestrator.get_settings_context = function(callback) {
     frappe.call({
         method: 'payment_orchestrator.api.settings.get_settings_context',
         callback(r) {
-            callback(r.message || {});
+            payment_orchestrator.settings = r.message || {};
+            callback(payment_orchestrator.settings);
         }
     });
 };
@@ -283,11 +284,13 @@ payment_orchestrator.payment_result_button = function(label, action, value, extr
 
 payment_orchestrator.render_payment_link_result = function(data) {
     const url = payment_orchestrator.escape_html(data.payment_link_url || '');
+    const show_message_preview = Boolean((payment_orchestrator.settings || {}).show_whatsapp_message_preview);
     return `
         <div class="po-payment-result" style="text-align:center;">
             <p><a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a></p>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:center;">
                 ${payment_orchestrator.payment_result_button(__('Send WhatsApp'), 'whatsapp', data.payment_intent || '')}
+                ${show_message_preview ? payment_orchestrator.payment_result_button(__('Show Message'), 'show_message', data.payment_intent || '') : ''}
                 ${payment_orchestrator.payment_result_button(__('Copy Link'), 'copy', data.payment_link_url || '')}
                 ${payment_orchestrator.payment_result_button(__('Open Link'), 'open', data.payment_link_url || '')}
             </div>
@@ -298,6 +301,7 @@ payment_orchestrator.render_payment_link_result = function(data) {
 payment_orchestrator.render_qr_result = function(data) {
     const url = payment_orchestrator.escape_html(data.qr_code_url || '');
     const filename = payment_orchestrator.escape_html(`payment-qr-${data.payment_intent || frappe.datetime.now_datetime()}.png`);
+    const show_message_preview = Boolean((payment_orchestrator.settings || {}).show_whatsapp_message_preview);
     return `
         <div class="po-payment-result" style="text-align:center;">
             <div style="margin-top:12px;">
@@ -305,6 +309,7 @@ payment_orchestrator.render_qr_result = function(data) {
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:center;">
                 ${payment_orchestrator.payment_result_button(__('Send WhatsApp'), 'whatsapp', data.payment_intent || '')}
+                ${show_message_preview ? payment_orchestrator.payment_result_button(__('Show Message'), 'show_message', data.payment_intent || '') : ''}
                 ${payment_orchestrator.payment_result_button(
                     __('Download QR Code'),
                     'download',
@@ -325,9 +330,6 @@ payment_orchestrator.render_pos_result = function(data) {
             <p>${__('POS Request')}: <b>${frappe.utils.escape_html(data.provider_pos_request_id || data.pos_request_status || '')}</b></p>
             <p>${__('Terminal')}: <b>${frappe.utils.escape_html(data.terminal_id || '')}</b></p>
             ${data.sales_invoice ? `<p>${__('Sales Invoice')}: <b>${frappe.utils.escape_html(data.sales_invoice || '')}</b></p>` : ''}
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:center;">
-                ${payment_orchestrator.payment_result_button(__('Send WhatsApp'), 'whatsapp', data.payment_intent || '')}
-            </div>
         </div>
     `;
 };
@@ -349,8 +351,71 @@ payment_orchestrator.bind_payment_result_actions = function() {
             payment_orchestrator.download_url(value, $button.attr('data-po-filename'));
         } else if (action === 'whatsapp') {
             payment_orchestrator.send_payment_whatsapp(value);
+        } else if (action === 'show_message') {
+            payment_orchestrator.toggle_payment_whatsapp_message(value, $button);
         }
     });
+};
+
+payment_orchestrator.toggle_payment_whatsapp_message = function(payment_intent, $button) {
+    const $container = $button.closest('.po-payment-result');
+    const $preview = $container.find('.po-message-preview');
+    if ($preview.length && $preview.is(':visible')) {
+        $preview.slideUp(120);
+        $button.text(__('Show Message'));
+        return;
+    }
+    payment_orchestrator.show_payment_whatsapp_message(payment_intent, $container, $button);
+};
+
+payment_orchestrator.show_payment_whatsapp_message = function(payment_intent, $container, $button) {
+    if (!payment_intent) {
+        frappe.msgprint(__('Payment Intent is required to show message.'));
+        return;
+    }
+
+    frappe.call({
+        method: 'payment_orchestrator.api.whatsapp.get_payment_message_preview',
+        args: { payment_intent },
+        freeze: true,
+        freeze_message: __('Preparing message...'),
+        callback(r) {
+            const data = r.message || {};
+            if (data.message) {
+                payment_orchestrator.render_message_preview($container, data.message);
+                if ($button && $button.length) {
+                    $button.text(__('Hide Message'));
+                }
+            }
+        },
+    });
+};
+
+payment_orchestrator.render_message_preview = function($container, message) {
+    if (!$container || !$container.length) {
+        payment_orchestrator.copy_text(message, __('Message copied'));
+        return;
+    }
+
+    const escaped_message = payment_orchestrator.escape_html(message);
+    let $preview = $container.find('.po-message-preview');
+    if (!$preview.length) {
+        $preview = $(`
+            <div class="po-message-preview" style="display:none;margin:14px auto 0;max-width:520px;text-align:left;">
+                <div style="font-size:12px;font-weight:600;margin-bottom:6px;">${__('WhatsApp Message')}</div>
+                <pre class="po-message-preview-text" style="white-space:pre-wrap;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;padding:10px;margin:0;max-height:220px;overflow:auto;font-size:13px;line-height:1.45;"></pre>
+                <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+                    <button type="button" class="btn btn-xs btn-primary po-copy-preview-message">${__('Copy')}</button>
+                </div>
+            </div>
+        `);
+        $container.append($preview);
+        $preview.on('click', '.po-copy-preview-message', function() {
+            payment_orchestrator.copy_text($preview.find('.po-message-preview-text').text(), __('Message copied'));
+        });
+    }
+    $preview.find('.po-message-preview-text').html(escaped_message);
+    $preview.slideDown(120);
 };
 
 payment_orchestrator.send_payment_whatsapp = function(payment_intent, mobile_no) {

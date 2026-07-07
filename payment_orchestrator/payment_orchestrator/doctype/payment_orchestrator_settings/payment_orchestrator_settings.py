@@ -40,6 +40,8 @@ class PaymentOrchestratorSettings(Document):
 		self.api_base_url = self.api_base_url.rstrip("/")
 		self.default_currency = self.default_currency or "INR"
 		self.default_request_channel = self.default_request_channel or "Payment Link"
+		self.whatsapp_payment_request_template = self.whatsapp_payment_request_template or "payment_request"
+		self.whatsapp_template_language = self.whatsapp_template_language or "en"
 		self.default_mode_of_payment = self.default_mode_of_payment or "Razorpay"
 		self.pos_timeout_seconds = max(int(self.pos_timeout_seconds or 30), 1)
 		self.pos_mode_of_payment = self.pos_mode_of_payment or "Pine Labs POS"

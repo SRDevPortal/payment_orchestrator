@@ -8,10 +8,15 @@ from payment_orchestrator.provider.razorpay.client import RazorpayClient
 from payment_orchestrator.provider.razorpay.qr_code import RazorpayQRCodeAdapter, resolve_qr_image_url
 from payment_orchestrator.api.pinelabs import pinelabs_amount, resolve_pos_request_type
 from payment_orchestrator.logic import _extract_payment_entity, _resolve_mode_of_payment
+from payment_orchestrator.api.whatsapp import ensure_whatsapp_supported_payment_intent
 from payment_orchestrator.notifications.whatsapp import (
+    build_payment_template_payload,
     build_payment_whatsapp_message,
+    is_template_fallback_error,
     normalize_mobile,
     payment_instruction,
+    payment_template_body_preview,
+    payment_whatsapp_audit_values,
     payment_whatsapp_transport,
     resolve_payment_channel_account,
 )
@@ -213,6 +218,118 @@ class WhatsAppPaymentNotificationTests(TestCase):
                 payment_whatsapp_transport(intent, "WA Account"),
                 ("Image", "https://interakt.example/payment-qr-PI-1.png"),
             )
+
+    def test_whatsapp_guard_allows_payment_link_with_url(self):
+        intent = SimpleNamespace(payment_mode="Payment Link", payment_link_url="https://rzp.io/rzp/test", qr_code_url=None)
+
+        ensure_whatsapp_supported_payment_intent(intent)
+
+    def test_whatsapp_guard_rejects_payment_link_without_url(self):
+        intent = SimpleNamespace(payment_mode="Payment Link", payment_link_url=None, qr_code_url=None)
+
+        with self._whatsapp_throw_patch(), self.assertRaisesRegex(Exception, "payment link URL is missing"):
+            ensure_whatsapp_supported_payment_intent(intent)
+
+    def test_whatsapp_guard_allows_qr_code_with_url(self):
+        intent = SimpleNamespace(payment_mode="QR Code", payment_link_url=None, qr_code_url="https://rzp.io/rzp/test")
+
+        ensure_whatsapp_supported_payment_intent(intent)
+
+    def test_whatsapp_guard_rejects_qr_code_without_url(self):
+        intent = SimpleNamespace(payment_mode="QR Code", payment_link_url=None, qr_code_url=None)
+
+        with self._whatsapp_throw_patch(), self.assertRaisesRegex(Exception, "QR code URL is missing"):
+            ensure_whatsapp_supported_payment_intent(intent)
+
+    def test_whatsapp_guard_rejects_pos_and_unknown_modes(self):
+        for payment_mode in ("POS", "Checkout", "Manual Share", ""):
+            with self.subTest(payment_mode=payment_mode):
+                intent = SimpleNamespace(payment_mode=payment_mode, payment_link_url="https://example.com", qr_code_url="https://example.com")
+                with self._whatsapp_throw_patch(), self.assertRaisesRegex(Exception, "Payment Link and QR Code"):
+                    ensure_whatsapp_supported_payment_intent(intent)
+
+    def test_whatsapp_audit_values_are_plain_strings(self):
+        with patch("payment_orchestrator.notifications.whatsapp.now_datetime", return_value=datetime(2026, 7, 7, 10, 0, 0)):
+            values = payment_whatsapp_audit_values(
+                recipient={"mobile_no": "919876543210"},
+                channel_account="SRIAAS ODIA",
+                message="787",
+                content_type="Image",
+                status="Sent",
+                error=None,
+            )
+
+        self.assertEqual(values["last_whatsapp_recipient"], "919876543210")
+        self.assertEqual(values["last_whatsapp_channel_account"], "SRIAAS ODIA")
+        self.assertEqual(values["last_whatsapp_message"], "787")
+        self.assertEqual(values["last_whatsapp_content_type"], "Image")
+        self.assertEqual(values["whatsapp_send_status"], "Sent")
+        self.assertIsNone(values["last_whatsapp_error"])
+        self.assertIn("last_whatsapp_sent_on", values)
+
+    def test_template_fallback_error_detection(self):
+        self.assertTrue(is_template_fallback_error("WhatsApp only allows free-text replies within 24 hours"))
+        self.assertTrue(is_template_fallback_error("outside customer service window"))
+        self.assertTrue(is_template_fallback_error("Use the Template button"))
+        self.assertFalse(is_template_fallback_error("Interakt API Key is not configured"))
+        self.assertFalse(is_template_fallback_error("mediaUrl should contain valid public URLs"))
+
+    def test_payment_template_payload_uses_four_approved_variables(self):
+        intent = SimpleNamespace(
+            amount_requested=10,
+            currency="INR",
+            payment_link_url="https://rzp.io/rzp/test123",
+            qr_code_url=None,
+            reference_doctype="Patient Encounter",
+            reference_name="HLC-ENC-2026-00106",
+            party_name="Jitendra Kumar",
+            company="SR Institute of Advanced Ayurvedic Sciences Private Limited",
+        )
+        settings = SimpleNamespace(
+            enable_whatsapp_template_fallback=1,
+            whatsapp_payment_request_template="payment_request",
+            whatsapp_template_language="en",
+        )
+        fake_frappe = SimpleNamespace(
+            get_single=lambda doctype: settings,
+            defaults=SimpleNamespace(get_user_default=lambda key: None),
+            throw=lambda message: (_ for _ in ()).throw(Exception(str(message))),
+        )
+
+        with patch("payment_orchestrator.notifications.whatsapp.frappe", fake_frappe):
+            payload = build_payment_template_payload(intent, {"display_name": "Jitendra Kumar"})
+
+        self.assertEqual(payload["template_name"], "payment_request")
+        self.assertEqual(payload["language_code"], "en")
+        self.assertEqual(
+            payload["body_values"],
+            [
+                "Jitendra Kumar",
+                "SR Institute of Advanced Ayurvedic Sciences Private Limited",
+                "Amount: ₹ 10.00 | Reference: Patient Encounter HLC-ENC-2026-00106",
+                "https://rzp.io/rzp/test123",
+            ],
+        )
+        self.assertIn("Payment details:", payload["body_preview"])
+
+    def test_payment_template_body_preview_matches_approved_shape(self):
+        preview = payment_template_body_preview([
+            "Jitendra Kumar",
+            "SR Institute",
+            "Amount: ₹ 10.00 | Reference: Patient Encounter HLC-ENC-1",
+            "https://rzp.io/rzp/test123",
+        ])
+
+        self.assertIn("Dear Jitendra Kumar,", preview)
+        self.assertIn("This is a payment request from SR Institute.", preview)
+        self.assertIn("Please use the secure payment link below", preview)
+        self.assertIn("Thank you.", preview)
+
+    def _whatsapp_throw_patch(self):
+        return patch(
+            "payment_orchestrator.api.whatsapp.frappe.throw",
+            side_effect=lambda message: (_ for _ in ()).throw(Exception(str(message))),
+        )
 
     def test_existing_active_conversation_channel_wins(self):
         fake_frappe = self._fake_channel_frappe(

@@ -23,66 +23,227 @@ def send_payment_whatsapp_message(intent, mobile_no=None):
             "message": _("Mobile number is required to send WhatsApp notification."),
         }
 
-    body = build_payment_whatsapp_message(intent, recipient=recipient)
-    conversation = _get_or_create_payment_conversation(intent, recipient)
-    channel_account = frappe.db.get_value("Chat Conversation", conversation, "channel_account")
-    content_type, media_url = payment_whatsapp_transport(intent, channel_account)
+    channel_account = None
+    queued = {}
+    sent_content_type = None
+    fallback_note = None
+    try:
+        body = build_payment_whatsapp_message(intent, recipient=recipient)
+        conversation = _get_or_create_payment_conversation(intent, recipient)
+        channel_account = frappe.db.get_value("Chat Conversation", conversation, "channel_account")
+        content_type, media_url = payment_whatsapp_transport(intent, channel_account)
 
-    from wa_chat_hub.api.runtime import send_pending_reply_to_provider
-    from wa_chat_hub.services import append_message
+        from wa_chat_hub.api.runtime import send_pending_reply_to_provider
+        from wa_chat_hub.services import append_message
 
-    queued = _append_payment_whatsapp_message(
-        append_message=append_message,
-        channel_account=channel_account,
-        recipient=recipient,
-        intent=intent,
-        body=body,
-        content_type=content_type,
-        media_url=media_url,
-    )
-    sent_content_type = content_type
-    result = send_pending_reply_to_provider(
-        message_name=queued.get("message"),
-        conversation=conversation,
-        body=body,
-        content_type=content_type,
-        media_url=media_url,
-        file_name=f"payment-qr-{intent.name}.png" if media_url else None,
-    )
-
-    if not result.get("success") and content_type == "Image":
-        sent_content_type = "Text"
         queued = _append_payment_whatsapp_message(
             append_message=append_message,
             channel_account=channel_account,
             recipient=recipient,
             intent=intent,
             body=body,
-            content_type="Text",
-            media_url=None,
+            content_type=content_type,
+            media_url=media_url,
         )
+        sent_content_type = content_type
         result = send_pending_reply_to_provider(
             message_name=queued.get("message"),
             conversation=conversation,
             body=body,
-            content_type="Text",
+            content_type=content_type,
+            media_url=media_url,
+            file_name=f"payment-qr-{intent.name}.png" if media_url else None,
         )
 
-    if not result.get("success"):
-        frappe.throw(result.get("error") or _("WhatsApp send failed"))
+        if not result.get("success") and content_type == "Image":
+            sent_content_type = "Text"
+            queued = _append_payment_whatsapp_message(
+                append_message=append_message,
+                channel_account=channel_account,
+                recipient=recipient,
+                intent=intent,
+                body=body,
+                content_type="Text",
+                media_url=None,
+            )
+            result = send_pending_reply_to_provider(
+                message_name=queued.get("message"),
+                conversation=conversation,
+                body=body,
+                content_type="Text",
+            )
 
-    _add_payment_intent_comment(intent, recipient, queued, result)
-    return {
-        "ok": True,
-        "payment_intent": intent.name,
-        "conversation": conversation,
+        if not result.get("success"):
+            fallback = send_payment_template_fallback_if_allowed(
+                intent=intent,
+                recipient=recipient,
+                conversation=conversation,
+                channel_account=channel_account,
+                append_message=append_message,
+                normal_error=result.get("error") or _("WhatsApp send failed"),
+            )
+            if fallback:
+                queued = fallback["queued"]
+                result = fallback["result"]
+                sent_content_type = "Template"
+                fallback_note = _("Template fallback used after normal WhatsApp send failed: {0}").format(
+                    result.get("normal_send_error") or fallback.get("normal_send_error") or ""
+                )
+            else:
+                frappe.throw(result.get("error") or _("WhatsApp send failed"))
+
+        delivery_status = (result.get("result") or {}).get("delivery_status") or "Sent"
+        _update_payment_whatsapp_audit(
+            intent,
+            recipient=recipient,
+            channel_account=channel_account,
+            message=queued.get("message"),
+            content_type=sent_content_type,
+            status=delivery_status,
+            error=fallback_note,
+        )
+        _add_payment_intent_comment(intent, recipient, queued, result)
+        return {
+            "ok": True,
+            "payment_intent": intent.name,
+            "conversation": conversation,
+            "channel_account": channel_account,
+            "message": queued.get("message"),
+            "mobile_no": recipient["mobile_no"],
+            "display_name": recipient.get("display_name"),
+            "delivery_status": delivery_status,
+            "content_type": sent_content_type,
+        }
+    except Exception as exc:
+        _update_payment_whatsapp_audit(
+            intent,
+            recipient=recipient,
+            channel_account=channel_account,
+            message=queued.get("message") if queued else None,
+            content_type=sent_content_type,
+            status="Failed",
+            error=str(exc),
+        )
+        raise
+
+
+def send_payment_template_fallback_if_allowed(intent, recipient, conversation, channel_account, append_message, normal_error):
+    if not is_template_fallback_error(normal_error):
+        return None
+
+    template = build_payment_template_payload(intent, recipient)
+    if not template:
+        return None
+
+    from wa_chat_hub.outbound import send_interakt_template_message
+
+    try:
+        outbound = send_interakt_template_message(conversation, template)
+    except Exception as exc:
+        frappe.log_error(frappe.get_traceback(), f"Payment WhatsApp template fallback failed for {intent.name}")
+        frappe.throw(_("WhatsApp template fallback failed after normal send failed: {0}").format(str(exc)))
+
+    delivery_status = outbound.get("delivery_status") or "Sent"
+    body_preview = template.get("body_preview") or f"Template: {template.get('template_name')}"
+    queued = append_message({
         "channel_account": channel_account,
-        "message": queued.get("message"),
-        "mobile_no": recipient["mobile_no"],
+        "phone_number": recipient["mobile_no"],
         "display_name": recipient.get("display_name"),
-        "delivery_status": (result.get("result") or {}).get("delivery_status") or "Sent",
-        "content_type": sent_content_type,
+        "direction": "Outbound",
+        "sender_type": "Agent",
+        "content_type": "Template",
+        "body": body_preview,
+        "delivery_status": delivery_status,
+        "channel_message_id": outbound.get("provider_message_id"),
+        "raw_transport_payload": {
+            **outbound,
+            "payment_intent": intent.name,
+            "normal_send_error": str(normal_error or ""),
+            "template_name": template.get("template_name"),
+            "body_values": template.get("body_values"),
+        },
+    })
+    return {
+        "queued": queued,
+        "normal_send_error": str(normal_error or ""),
+        "result": {
+            "success": True,
+            "message": queued.get("message"),
+            "normal_send_error": str(normal_error or ""),
+            "result": {
+                **outbound,
+                "delivery_status": delivery_status,
+                "normal_send_error": str(normal_error or ""),
+            },
+        },
     }
+
+
+def build_payment_template_payload(intent, recipient):
+    settings = frappe.get_single("Payment Orchestrator Settings")
+    if not getattr(settings, "enable_whatsapp_template_fallback", 0):
+        return None
+
+    template_name = (getattr(settings, "whatsapp_payment_request_template", None) or "").strip()
+    if not template_name:
+        frappe.throw(_("Payment Request WhatsApp template name is required for template fallback."))
+
+    salutation_name = recipient.get("display_name") or intent.party_name or "Patient"
+    company = getattr(intent, "company", None) or frappe.defaults.get_user_default("Company") or ""
+    details = "Amount: {0} | Reference: {1}".format(
+        format_amount(intent.amount_requested, intent.currency),
+        f"{intent.reference_doctype} {intent.reference_name}".strip(),
+    )
+    payment_url = intent.payment_link_url or intent.qr_code_url
+    if not payment_url:
+        frappe.throw(_("Payment URL is required for WhatsApp template fallback."))
+
+    body_values = [salutation_name, company, details, payment_url]
+    return {
+        "template_name": template_name,
+        "language_code": (getattr(settings, "whatsapp_template_language", None) or "en").strip() or "en",
+        "body_values": body_values,
+        "body_preview": payment_template_body_preview(body_values),
+        "template_category": "UTILITY",
+    }
+
+
+def payment_template_body_preview(body_values):
+    name, company, details, payment_url = body_values
+    return "\n".join([
+        f"Dear {name},",
+        "",
+        f"This is a payment request from {company}.",
+        "",
+        "Payment details:",
+        details,
+        "",
+        "Please use the secure payment link below to complete your payment:",
+        payment_url,
+        "",
+        "If you have already completed this payment, please ignore this message.",
+        "",
+        "Thank you.",
+    ])
+
+
+def is_template_fallback_error(error):
+    text = str(error or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "24 hour",
+            "24-hour",
+            "24hours",
+            "outside",
+            "session",
+            "template",
+            "window",
+            "free-text",
+            "free text",
+            "customer service",
+        )
+    )
 
 
 def _append_payment_whatsapp_message(append_message, channel_account, recipient, intent, body, content_type, media_url=None):
@@ -446,6 +607,36 @@ def _add_payment_intent_comment(intent, recipient, queued, result):
         frappe.db.set_value("Payment Intent", intent.name, "last_synced_on", now_datetime(), update_modified=False)
     except Exception:
         frappe.log_error(frappe.get_traceback(), f"Payment WhatsApp audit failed for {intent.name}")
+
+
+def _update_payment_whatsapp_audit(intent, recipient, channel_account=None, message=None, content_type=None, status=None, error=None):
+    try:
+        values = payment_whatsapp_audit_values(
+            recipient=recipient,
+            channel_account=channel_account,
+            message=message,
+            content_type=content_type,
+            status=status,
+            error=error,
+        )
+        meta = frappe.get_meta("Payment Intent")
+        values = {fieldname: value for fieldname, value in values.items() if meta.has_field(fieldname)}
+        if values:
+            frappe.db.set_value("Payment Intent", intent.name, values, update_modified=False)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), f"Payment WhatsApp audit fields failed for {intent.name}")
+
+
+def payment_whatsapp_audit_values(recipient, channel_account=None, message=None, content_type=None, status=None, error=None):
+    return {
+        "last_whatsapp_sent_on": now_datetime(),
+        "last_whatsapp_recipient": (recipient or {}).get("mobile_no"),
+        "last_whatsapp_channel_account": channel_account,
+        "last_whatsapp_message": message,
+        "last_whatsapp_content_type": content_type,
+        "whatsapp_send_status": status,
+        "last_whatsapp_error": error or None,
+    }
 
 
 def _ensure_wa_chat_hub_available():

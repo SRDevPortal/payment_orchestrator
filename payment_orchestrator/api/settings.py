@@ -25,6 +25,7 @@ def get_settings_context():
         'enable_auto_allocation': get_flag(doc, 'enable_auto_allocation', 1),
         'show_action_buttons': get_flag(doc, 'show_action_buttons', 1),
         'show_payment_summary_on_reference_doctypes': get_flag(doc, 'show_payment_summary_on_reference_doctypes', 1),
+        'show_whatsapp_message_preview': get_flag(doc, 'show_whatsapp_message_preview'),
         'enable_razorpay': get_flag(doc, 'enable_razorpay', 1),
         'enable_razorpay_payment_link': is_razorpay_payment_link_enabled(settings=doc),
         'razorpay_payment_link_mode': getattr(doc, 'razorpay_payment_link_mode', None),
