@@ -312,6 +312,21 @@ class WhatsAppPaymentNotificationTests(TestCase):
         self.assertIsNone(values["last_whatsapp_error"])
         self.assertIn("last_whatsapp_sent_on", values)
 
+    def test_successful_template_fallback_does_not_store_last_error(self):
+        with patch("payment_orchestrator.notifications.whatsapp.now_datetime", return_value=datetime(2026, 7, 7, 10, 0, 0)):
+            values = payment_whatsapp_audit_values(
+                recipient={"mobile_no": "919876543210"},
+                channel_account="Siya Ayurveda",
+                message="391",
+                content_type="Template",
+                status="Sent",
+                error=None,
+            )
+
+        self.assertEqual(values["last_whatsapp_content_type"], "Template")
+        self.assertEqual(values["whatsapp_send_status"], "Sent")
+        self.assertIsNone(values["last_whatsapp_error"])
+
     def test_template_fallback_error_detection(self):
         self.assertTrue(is_template_fallback_error("WhatsApp only allows free-text replies within 24 hours"))
         self.assertTrue(is_template_fallback_error("outside customer service window"))

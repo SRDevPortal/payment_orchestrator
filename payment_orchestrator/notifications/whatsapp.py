@@ -26,7 +26,6 @@ def send_payment_whatsapp_message(intent, mobile_no=None):
     channel_account = None
     queued = {}
     sent_content_type = None
-    fallback_note = None
     try:
         body = build_payment_whatsapp_message(intent, recipient=recipient)
         conversation = _get_or_create_payment_conversation(intent, recipient)
@@ -86,9 +85,6 @@ def send_payment_whatsapp_message(intent, mobile_no=None):
                 queued = fallback["queued"]
                 result = fallback["result"]
                 sent_content_type = "Template"
-                fallback_note = _("Template fallback used after normal WhatsApp send failed: {0}").format(
-                    result.get("normal_send_error") or fallback.get("normal_send_error") or ""
-                )
             else:
                 frappe.throw(result.get("error") or _("WhatsApp send failed"))
 
@@ -100,7 +96,7 @@ def send_payment_whatsapp_message(intent, mobile_no=None):
             message=queued.get("message"),
             content_type=sent_content_type,
             status=delivery_status,
-            error=fallback_note,
+            error=None,
         )
         _add_payment_intent_comment(intent, recipient, queued, result)
         return {
