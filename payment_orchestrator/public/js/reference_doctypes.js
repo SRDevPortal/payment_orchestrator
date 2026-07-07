@@ -459,7 +459,7 @@ payment_orchestrator.send_payment_whatsapp = function(payment_intent, mobile_no,
                 const delivery_status = data.delivery_status || 'Sent';
                 const sent_message = ['Delivered', 'Read'].includes(delivery_status)
                     ? __('WhatsApp {0} to {1}', [delivery_status, data.mobile_no || ''])
-                    : __('WhatsApp queued with provider for {0}', [data.mobile_no || '']);
+                    : __('WhatsApp message sent to {0}. Delivery status will update shortly.', [data.mobile_no || '']);
                 payment_orchestrator.render_payment_result_notice(
                     $container,
                     sent_message,
