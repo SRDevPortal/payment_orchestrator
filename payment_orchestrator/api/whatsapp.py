@@ -18,7 +18,9 @@ def send_payment_request(payment_intent, mobile_no=None):
     ensure_payment_intent_action_permission(intent)
     ensure_whatsapp_supported_payment_intent(intent)
     try:
-        return send_payment_whatsapp_message(intent, mobile_no=mobile_no)
+        result = send_payment_whatsapp_message(intent, mobile_no=mobile_no)
+        frappe.local.message_log = []
+        return result
     except Exception as exc:
         frappe.local.message_log = []
         return {
