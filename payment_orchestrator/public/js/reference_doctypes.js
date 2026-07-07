@@ -350,7 +350,7 @@ payment_orchestrator.bind_payment_result_actions = function() {
         } else if (action === 'download') {
             payment_orchestrator.download_url(value, $button.attr('data-po-filename'));
         } else if (action === 'whatsapp') {
-            payment_orchestrator.send_payment_whatsapp(value);
+            payment_orchestrator.send_payment_whatsapp(value, null, $button.closest('.po-payment-result'));
         } else if (action === 'show_message') {
             payment_orchestrator.toggle_payment_whatsapp_message(value, $button);
         }
@@ -418,7 +418,24 @@ payment_orchestrator.render_message_preview = function($container, message) {
     $preview.slideDown(120);
 };
 
-payment_orchestrator.send_payment_whatsapp = function(payment_intent, mobile_no) {
+payment_orchestrator.render_payment_result_notice = function($container, message, indicator) {
+    if (!$container || !$container.length || !message) return;
+
+    const color = indicator === 'green' ? '#15803d' : '#b45309';
+    const background = indicator === 'green' ? '#f0fdf4' : '#fffbeb';
+    const border = indicator === 'green' ? '#bbf7d0' : '#fde68a';
+    let $notice = $container.find('.po-payment-result-notice');
+    if (!$notice.length) {
+        $notice = $('<div class="po-payment-result-notice" style="margin:12px auto 0;max-width:540px;text-align:left;border-radius:6px;padding:9px 11px;font-size:13px;line-height:1.45;"></div>');
+        $container.append($notice);
+    }
+    $notice
+        .css({ color, background, border: `1px solid ${border}` })
+        .text(message)
+        .show();
+};
+
+payment_orchestrator.send_payment_whatsapp = function(payment_intent, mobile_no, $container) {
     if (!payment_intent) {
         frappe.msgprint(__('Payment Intent is required to send WhatsApp.'));
         return;
@@ -439,13 +456,44 @@ payment_orchestrator.send_payment_whatsapp = function(payment_intent, mobile_no)
                 return;
             }
             if (data.ok) {
+                payment_orchestrator.render_payment_result_notice(
+                    $container,
+                    __('WhatsApp sent to {0}', [data.mobile_no || '']),
+                    'green'
+                );
                 frappe.show_alert({
                     message: __('WhatsApp sent to {0}', [data.mobile_no || '']),
                     indicator: 'green',
                 }, 8);
+                return;
+            }
+            if (data.message) {
+                payment_orchestrator.render_payment_result_notice($container, data.message, 'orange');
+                frappe.show_alert({
+                    message: __('WhatsApp could not be sent.'),
+                    indicator: 'orange',
+                }, 8);
             }
         },
+        error(xhr) {
+            const message = payment_orchestrator.extract_error_message(xhr) || __('WhatsApp could not be sent.');
+            payment_orchestrator.render_payment_result_notice($container, message, 'orange');
+        },
     });
+};
+
+payment_orchestrator.extract_error_message = function(xhr) {
+    const response = (xhr || {}).responseJSON || {};
+    if (response.message) return response.message;
+    if (response._server_messages) {
+        try {
+            const messages = JSON.parse(response._server_messages).map((item) => JSON.parse(item).message || item);
+            return messages.join('\n');
+        } catch (e) {
+            return response._server_messages;
+        }
+    }
+    return '';
 };
 
 payment_orchestrator.prompt_payment_whatsapp_mobile = function(payment_intent) {

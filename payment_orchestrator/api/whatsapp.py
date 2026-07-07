@@ -17,7 +17,15 @@ def send_payment_request(payment_intent, mobile_no=None):
     intent = frappe.get_doc("Payment Intent", payment_intent)
     ensure_payment_intent_action_permission(intent)
     ensure_whatsapp_supported_payment_intent(intent)
-    return send_payment_whatsapp_message(intent, mobile_no=mobile_no)
+    try:
+        return send_payment_whatsapp_message(intent, mobile_no=mobile_no)
+    except Exception as exc:
+        frappe.local.message_log = []
+        return {
+            "ok": False,
+            "payment_intent": intent.name,
+            "message": str(exc),
+        }
 
 
 @frappe.whitelist()
