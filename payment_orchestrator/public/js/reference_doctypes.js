@@ -456,13 +456,17 @@ payment_orchestrator.send_payment_whatsapp = function(payment_intent, mobile_no,
                 return;
             }
             if (data.ok) {
+                const delivery_status = data.delivery_status || 'Sent';
+                const sent_message = ['Delivered', 'Read'].includes(delivery_status)
+                    ? __('WhatsApp {0} to {1}', [delivery_status, data.mobile_no || ''])
+                    : __('WhatsApp queued with provider for {0}', [data.mobile_no || '']);
                 payment_orchestrator.render_payment_result_notice(
                     $container,
-                    __('WhatsApp sent to {0}', [data.mobile_no || '']),
+                    sent_message,
                     'green'
                 );
                 frappe.show_alert({
-                    message: __('WhatsApp sent to {0}', [data.mobile_no || '']),
+                    message: sent_message,
                     indicator: 'green',
                 }, 8);
                 return;
@@ -517,9 +521,11 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
     const dialog = opts.dialog;
     const frm = opts.frm;
     const timeout_ms = opts.timeout_ms || 10 * 60 * 1000;
-    const provider_poll_ms = opts.provider_poll_ms || 15 * 1000;
+    const status_poll_ms = opts.status_poll_ms || 30 * 1000;
+    const provider_poll_ms = opts.provider_poll_ms || 60 * 1000;
     const started_at = Date.now();
     let last_provider_fetch = 0;
+    let polling = false;
 
     payment_orchestrator.stop_payment_watcher(payment_intent);
 
@@ -556,14 +562,17 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
 
     const poll = function() {
         if (watcher.stopped) return;
+        if (polling) return;
         if (Date.now() - started_at > timeout_ms) {
             fail(__('Payment status check timed out. Please open the Payment Intent to sync latest status.'));
             return;
         }
+        polling = true;
         frappe.call({
             method: 'payment_orchestrator.api.common.intents.get_payment_intent',
             args: { payment_intent },
             callback(r) {
+                polling = false;
                 const intent = r.message || {};
                 if (payment_orchestrator.is_payment_complete(intent)) {
                     complete(intent);
@@ -591,8 +600,8 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
                         args: { payment_intent },
                         callback(fetch_response) {
                             const result = (fetch_response.message || {}).result || {};
-                            if (result.payment_intent || (fetch_response.message || {}).processed) {
-                                poll();
+                            if (payment_orchestrator.is_payment_complete(result)) {
+                                complete(result);
                             }
                         },
                         error() {
@@ -607,8 +616,11 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
                     frappe.call({
                         method: 'payment_orchestrator.api.razorpay.fetch_qr_code',
                         args: { payment_intent },
-                        callback() {
-                            poll();
+                        callback(fetch_response) {
+                            const result = (fetch_response.message || {}).result || {};
+                            if (payment_orchestrator.is_payment_complete(result)) {
+                                complete(result);
+                            }
                         },
                         error() {
                             // Keep the UI watcher alive; webhook/callback may still update the intent.
@@ -635,6 +647,9 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
                         }
                     });
                 }
+            },
+            error() {
+                polling = false;
             }
         });
     };
@@ -654,7 +669,7 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
         frappe.realtime.on('payment_orchestrator_payment_failed', watcher.failure_handler);
     }
 
-    watcher.interval = setInterval(poll, 3000);
+    watcher.interval = setInterval(poll, status_poll_ms);
     watcher.timeout = setTimeout(() => {
         frappe.call({
             method: 'payment_orchestrator.api.sync.expire_stale_unpaid_intents',
@@ -664,7 +679,7 @@ payment_orchestrator.watch_payment_completion = function(payment_intent, options
             }
         });
     }, timeout_ms);
-    setTimeout(poll, 1500);
+    setTimeout(poll, Math.min(1500, status_poll_ms));
 
     if (dialog && dialog.$wrapper) {
         dialog.$wrapper.on('hidden.bs.modal', () => payment_orchestrator.stop_payment_watcher(payment_intent));
@@ -933,6 +948,7 @@ payment_orchestrator.add_request_payment_button = function(frm, settings) {
                             payment_orchestrator.watch_payment_completion(data.payment_intent, {
                                 frm,
                                 dialog: frappe.msg_dialog,
+                                status_poll_ms: 3000,
                                 provider_poll_ms: 1500,
                                 timeout_ms: pos_timeout_minutes * 60 * 1000,
                             });

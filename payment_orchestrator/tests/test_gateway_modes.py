@@ -12,12 +12,16 @@ from payment_orchestrator.api.whatsapp import ensure_whatsapp_supported_payment_
 from payment_orchestrator.notifications.whatsapp import (
     build_payment_template_payload,
     build_payment_whatsapp_message,
+    find_approved_whatsapp_template,
     is_template_fallback_error,
     normalize_mobile,
+    payment_whatsapp_delivery_audit_values,
     payment_instruction,
     payment_template_body_preview,
+    payment_template_name_for_intent,
     payment_whatsapp_audit_values,
     payment_whatsapp_transport,
+    resolve_approved_payment_template,
     resolve_payment_channel_account,
 )
 from payment_orchestrator.payment_orchestrator.doctype.payment_orchestrator_settings.payment_orchestrator_settings import (
@@ -327,6 +331,26 @@ class WhatsAppPaymentNotificationTests(TestCase):
         self.assertEqual(values["whatsapp_send_status"], "Sent")
         self.assertIsNone(values["last_whatsapp_error"])
 
+    def test_delivery_audit_values_clear_error_for_success_status(self):
+        values = payment_whatsapp_delivery_audit_values(
+            SimpleNamespace(delivery_status="Read", raw_payload='{"error":"old provider error"}')
+        )
+
+        self.assertEqual(values["whatsapp_send_status"], "Read")
+        self.assertIsNone(values["last_whatsapp_error"])
+
+    def test_delivery_audit_values_store_failed_error(self):
+        values = payment_whatsapp_delivery_audit_values(
+            SimpleNamespace(
+                delivery_status="Failed",
+                raw_payload='{"error":{"message":"Recipient phone number is invalid"}}',
+                raw_transport_payload=None,
+            )
+        )
+
+        self.assertEqual(values["whatsapp_send_status"], "Failed")
+        self.assertEqual(values["last_whatsapp_error"], "Recipient phone number is invalid")
+
     def test_template_fallback_error_detection(self):
         self.assertTrue(is_template_fallback_error("WhatsApp only allows free-text replies within 24 hours"))
         self.assertTrue(is_template_fallback_error("outside customer service window"))
@@ -372,6 +396,53 @@ class WhatsAppPaymentNotificationTests(TestCase):
         )
         self.assertIn("Payment details:", payload["body_preview"])
 
+    def test_payment_template_name_uses_qr_template_when_present(self):
+        settings = SimpleNamespace(
+            whatsapp_payment_request_template="payment_request",
+            whatsapp_qr_code_template="payment_qr_request",
+        )
+
+        self.assertEqual(
+            payment_template_name_for_intent(settings, SimpleNamespace(payment_mode="Payment Link")),
+            "payment_request",
+        )
+        self.assertEqual(
+            payment_template_name_for_intent(settings, SimpleNamespace(payment_mode="QR Code")),
+            "payment_qr_request",
+        )
+
+    def test_payment_template_name_falls_back_to_link_template_for_qr(self):
+        settings = SimpleNamespace(
+            whatsapp_payment_request_template="payment_request",
+            whatsapp_qr_code_template="",
+        )
+
+        self.assertEqual(
+            payment_template_name_for_intent(settings, SimpleNamespace(payment_mode="QR Code")),
+            "payment_request",
+        )
+
+    def test_find_approved_whatsapp_template_matches_exact_name(self):
+        templates = [
+            {"name": "payment_request_32", "display_name": "payment_request", "language_code": "en", "languages": ["en"]},
+        ]
+
+        match = find_approved_whatsapp_template(templates, "payment_request_32", "en")
+
+        self.assertEqual(match["name"], "payment_request_32")
+
+    def test_resolve_approved_payment_template_accepts_display_name_alias(self):
+        template = {"template_name": "payment_request", "language_code": "en"}
+        approved = [
+            {"name": "payment_request_32", "display_name": "payment_request", "language_code": "en", "languages": ["en"]},
+        ]
+
+        with patch("payment_orchestrator.notifications.whatsapp.fetch_approved_whatsapp_templates", return_value=approved):
+            resolved = resolve_approved_payment_template("SRIAAS ODIA", template)
+
+        self.assertEqual(resolved["template_name"], "payment_request_32")
+        self.assertEqual(resolved["configured_template_name"], "payment_request")
+
     def test_payment_template_body_preview_matches_approved_shape(self):
         preview = payment_template_body_preview([
             "Jitendra Kumar",
@@ -384,6 +455,20 @@ class WhatsAppPaymentNotificationTests(TestCase):
         self.assertIn("This is a payment request from SR Institute.", preview)
         self.assertIn("Please use the secure payment link below", preview)
         self.assertIn("Thank you.", preview)
+
+    def test_payment_template_body_preview_for_qr_mentions_image(self):
+        preview = payment_template_body_preview(
+            [
+                "Jitendra Kumar",
+                "SR Institute",
+                "Amount: â‚¹ 10.00 | Reference: Patient Encounter HLC-ENC-1",
+                "https://api.razorpay.com/v1/l/qrcode/qr_123",
+            ],
+            is_qr=True,
+        )
+
+        self.assertIn("Please scan the QR image above", preview)
+        self.assertIn("https://api.razorpay.com/v1/l/qrcode/qr_123", preview)
 
     def _whatsapp_throw_patch(self):
         return patch(

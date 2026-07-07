@@ -130,6 +130,9 @@ def send_payment_template_fallback_if_allowed(intent, recipient, conversation, c
     template = build_payment_template_payload(intent, recipient)
     if not template:
         return None
+    if getattr(intent, "payment_mode", None) == "QR Code":
+        template = with_qr_template_media(intent, channel_account, template)
+    template = resolve_approved_payment_template(channel_account, template)
 
     from wa_chat_hub.outbound import send_interakt_template_message
 
@@ -175,12 +178,78 @@ def send_payment_template_fallback_if_allowed(intent, recipient, conversation, c
     }
 
 
+def resolve_approved_payment_template(channel_account, template):
+    template_name = (template.get("template_name") or "").strip()
+    language_code = (template.get("language_code") or "en").strip() or "en"
+    if not template_name or not channel_account:
+        return template
+
+    approved_templates = fetch_approved_whatsapp_templates(channel_account, force_refresh=False)
+    match = find_approved_whatsapp_template(approved_templates, template_name, language_code)
+    if not match:
+        approved_templates = fetch_approved_whatsapp_templates(channel_account, force_refresh=True)
+        match = find_approved_whatsapp_template(approved_templates, template_name, language_code)
+
+    if not match:
+        available = ", ".join(
+            sorted(
+                {
+                    f"{row.get('name')} ({row.get('language_code') or 'en'})"
+                    for row in approved_templates
+                    if row.get("name")
+                }
+            )
+        )
+        frappe.throw(
+            _(
+                "WhatsApp template '{0}' language '{1}' is not approved on channel '{2}'. "
+                "Approved templates available: {3}. Update Payment Orchestrator Settings to the Interakt template name."
+            ).format(template_name, language_code, channel_account, available or _("none"))
+        )
+
+    resolved_name = (match.get("name") or template_name).strip()
+    if resolved_name != template_name:
+        template = {**template, "template_name": resolved_name, "configured_template_name": template_name}
+    return template
+
+
+def fetch_approved_whatsapp_templates(channel_account, force_refresh=False):
+    try:
+        from wa_chat_hub.interakt.templates_api import fetch_approved_templates
+    except Exception:
+        return []
+
+    return fetch_approved_templates(channel_account, force_refresh=force_refresh) or []
+
+
+def find_approved_whatsapp_template(templates, template_name, language_code):
+    wanted_name = (template_name or "").strip().lower()
+    wanted_language = (language_code or "en").strip().lower() or "en"
+    display_match = None
+
+    for row in templates or []:
+        name = (row.get("name") or "").strip()
+        display_name = (row.get("display_name") or "").strip()
+        languages = row.get("languages") or [row.get("language_code") or "en"]
+        language_matches = wanted_language in {
+            str(language or "en").strip().lower() or "en" for language in languages
+        }
+        if not language_matches:
+            continue
+        if name.lower() == wanted_name:
+            return row
+        if display_name.lower() == wanted_name and not display_match:
+            display_match = row
+
+    return display_match
+
+
 def build_payment_template_payload(intent, recipient):
     settings = frappe.get_single("Payment Orchestrator Settings")
     if not getattr(settings, "enable_whatsapp_template_fallback", 0):
         return None
 
-    template_name = (getattr(settings, "whatsapp_payment_request_template", None) or "").strip()
+    template_name = payment_template_name_for_intent(settings, intent)
     if not template_name:
         frappe.throw(_("Payment Request WhatsApp template name is required for template fallback."))
 
@@ -195,17 +264,41 @@ def build_payment_template_payload(intent, recipient):
         frappe.throw(_("Payment URL is required for WhatsApp template fallback."))
 
     body_values = [salutation_name, company, details, payment_url]
+    is_qr = getattr(intent, "payment_mode", None) == "QR Code"
     return {
         "template_name": template_name,
         "language_code": (getattr(settings, "whatsapp_template_language", None) or "en").strip() or "en",
         "body_values": body_values,
-        "body_preview": payment_template_body_preview(body_values),
+        "body_preview": payment_template_body_preview(body_values, is_qr=is_qr),
         "template_category": "UTILITY",
     }
 
 
-def payment_template_body_preview(body_values):
+def payment_template_name_for_intent(settings, intent):
+    link_template = (getattr(settings, "whatsapp_payment_request_template", None) or "").strip()
+    if getattr(intent, "payment_mode", None) == "QR Code":
+        return (getattr(settings, "whatsapp_qr_code_template", None) or "").strip() or link_template
+    return link_template
+
+
+def with_qr_template_media(intent, channel_account, template):
+    media_url = interakt_qr_image_url(intent, channel_account)
+    if not media_url:
+        return template
+    return {
+        **template,
+        "header_values": [media_url],
+        "file_name": f"payment-qr-{intent.name}.png",
+    }
+
+
+def payment_template_body_preview(body_values, is_qr=False):
     name, company, details, payment_url = body_values
+    payment_instruction_text = (
+        "Please scan the QR image above or use the secure payment link below to complete your payment:"
+        if is_qr
+        else "Please use the secure payment link below to complete your payment:"
+    )
     return "\n".join([
         f"Dear {name},",
         "",
@@ -214,7 +307,7 @@ def payment_template_body_preview(body_values):
         "Payment details:",
         details,
         "",
-        "Please use the secure payment link below to complete your payment:",
+        payment_instruction_text,
         payment_url,
         "",
         "If you have already completed this payment, please ignore this message.",
@@ -633,6 +726,109 @@ def payment_whatsapp_audit_values(recipient, channel_account=None, message=None,
         "whatsapp_send_status": status,
         "last_whatsapp_error": error or None,
     }
+
+
+def sync_payment_whatsapp_delivery_status(intent):
+    message = getattr(intent, "last_whatsapp_message", None)
+    if not message:
+        return None
+    if not frappe.db.exists("DocType", "Chat Message") or not frappe.db.exists("Chat Message", message):
+        return None
+
+    fields = ["delivery_status", "raw_payload", "raw_transport_payload"]
+    meta = frappe.get_meta("Chat Message")
+    fields = [field for field in fields if meta.has_field(field)]
+    if not fields:
+        return None
+
+    row = frappe.db.get_value("Chat Message", message, fields, as_dict=True)
+    values = payment_whatsapp_delivery_audit_values(row)
+    if not values:
+        return None
+
+    intent_meta = frappe.get_meta("Payment Intent")
+    values = {fieldname: value for fieldname, value in values.items() if intent_meta.has_field(fieldname)}
+    if not values:
+        return None
+
+    values["last_synced_on"] = now_datetime()
+    frappe.db.set_value("Payment Intent", intent.name, values, update_modified=False)
+    return values
+
+
+def sync_recent_payment_whatsapp_delivery_statuses(limit=100):
+    if not frappe.db.exists("DocType", "Chat Message"):
+        return {"updated": 0}
+
+    rows = frappe.get_all(
+        "Payment Intent",
+        filters={"last_whatsapp_message": ["is", "set"]},
+        fields=["name"],
+        order_by="modified desc",
+        limit=limit,
+    )
+    updated = 0
+    for row in rows:
+        try:
+            intent = frappe.get_doc("Payment Intent", row.name)
+            if sync_payment_whatsapp_delivery_status(intent):
+                updated += 1
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), f"Payment WhatsApp delivery sync failed for {row.name}")
+    return {"updated": updated}
+
+
+def payment_whatsapp_delivery_audit_values(chat_message):
+    status = (getattr(chat_message, "delivery_status", None) or "").strip()
+    if not status:
+        return {}
+
+    error = None
+    if status == "Failed":
+        error = extract_whatsapp_delivery_error(chat_message)
+
+    return {
+        "whatsapp_send_status": status,
+        "last_whatsapp_error": error,
+    }
+
+
+def extract_whatsapp_delivery_error(chat_message):
+    for fieldname in ("raw_payload", "raw_transport_payload"):
+        raw_value = getattr(chat_message, fieldname, None)
+        if not raw_value:
+            continue
+        try:
+            payload = frappe.parse_json(raw_value)
+        except Exception:
+            payload = raw_value
+        message = _extract_error_from_payload(payload)
+        if message:
+            return message
+    return None
+
+
+def _extract_error_from_payload(payload):
+    if not payload:
+        return None
+    if isinstance(payload, str):
+        return payload[:500]
+    if not isinstance(payload, dict):
+        return None
+
+    for key in ("error", "message", "reason", "failure_reason", "failed_reason"):
+        value = payload.get(key)
+        if value:
+            return _extract_error_from_payload(value) or str(value)[:500]
+
+    for key in ("errors", "details"):
+        value = payload.get(key)
+        if isinstance(value, list) and value:
+            return _extract_error_from_payload(value[0])
+        if isinstance(value, dict):
+            return _extract_error_from_payload(value)
+
+    return None
 
 
 def _ensure_wa_chat_hub_available():

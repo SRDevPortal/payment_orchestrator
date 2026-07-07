@@ -6,6 +6,7 @@ from payment_orchestrator.logic import (
     apply_unpaid_terminal_provider_status,
     refresh_intent_and_reference,
 )
+from payment_orchestrator.notifications.whatsapp import sync_recent_payment_whatsapp_delivery_statuses
 from payment_orchestrator.services import update_reference_payment_summary
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
 from payment_orchestrator.utils import get_settings
@@ -45,6 +46,7 @@ def run_periodic_sync():
             frappe.log_error(frappe.get_traceback(), f'Payment Orchestrator sync failed for {row.name}')
 
     _expire_stale_unpaid_intents()
+    sync_recent_payment_whatsapp_delivery_statuses()
 
 
 def fetch_payment_link_for_gateway(intent):
