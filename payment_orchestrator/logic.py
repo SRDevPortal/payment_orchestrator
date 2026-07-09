@@ -260,6 +260,7 @@ def sync_encounter_multi_payment_from_intent(intent):
     row = _find_encounter_payment_row(encounter, intent)
     paid_on = getdate(intent.paid_on) if intent.paid_on else nowdate()
     reference_no = _provider_reference_no(intent)
+    provider_confirmation_url = _provider_confirmation_url(intent)
     values = {
         'mmp_paid_amount': flt(intent.amount_paid or intent.amount_requested),
         'mmp_mode_of_payment': _resolve_mode_of_payment(intent, get_settings()),
@@ -271,6 +272,8 @@ def sync_encounter_multi_payment_from_intent(intent):
         'mmp_payment_mode': intent.payment_mode,
         'mmp_orchestrator_status': 'Paid',
     }
+    if provider_confirmation_url and not getattr(row, 'mmp_payment_proof', None):
+        values['mmp_payment_proof'] = provider_confirmation_url
     values = _filter_values_for_doctype('SR Multi Mode Payment', values)
 
     if row is not None:
@@ -436,6 +439,40 @@ def _provider_reference_no(intent):
         or intent.provider_link_id
         or intent.name
     )
+
+
+def _provider_confirmation_url(intent):
+    return (
+        intent.payment_link_url
+        or intent.qr_code_url
+        or _provider_confirmation_url_from_payload(getattr(intent, 'provider_payload_snapshot', None))
+    )
+
+
+def _provider_confirmation_url_from_payload(payload):
+    if not payload:
+        return None
+    try:
+        data = frappe.parse_json(payload) if isinstance(payload, str) else payload
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    sources = [
+        data,
+        data.get('payload', {}).get('payment_link', {}).get('entity', {}),
+        data.get('payment_link', {}),
+        data.get('data', {}),
+    ]
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for fieldname in ('short_url', 'long_url', 'payment_link_url', 'payment_link', 'qr_code_url', 'image_url'):
+            value = source.get(fieldname)
+            if value:
+                return value
+    return None
 
 
 def _set_child_values_if_present(row, child_doctype, values):
