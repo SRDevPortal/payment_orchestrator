@@ -14,6 +14,7 @@ PINELABS_ONLINE_BASE_URL = "https://pluraluat.v2.pinepg.in"
 PINELABS_ONLINE_AUTH_PATH = "/api/auth/v1/token"
 PINELABS_PAYMENT_LINK_PATH = "/api/pay/v1/paymentlink"
 PINELABS_PAYMENT_LINK_DEFAULT_DISPLAY = "Pine Labs Default Page"
+DEFAULT_PAYMENT_ACTION_ROLES = ("Accounts Manager", "Accounts User", "System Manager")
 
 
 class PaymentOrchestratorSettings(Document):
@@ -62,6 +63,8 @@ class PaymentOrchestratorSettings(Document):
 		self.pinelabs_upi_qr_payment_mode_code = self.pinelabs_upi_qr_payment_mode_code or "10"
 		self.pinelabs_auto_cancel_duration = max(int(self.pinelabs_auto_cancel_duration or 5), 1)
 		self.payment_link_expiry_hours = max(int(self.payment_link_expiry_hours or 72), 1)
+		self.set_default_payment_action_access()
+		self.validate_payment_action_access()
 		self.reset_inactive_gateway_fields()
 
 		if self.provider_enabled and self.enable_razorpay and not self.has_razorpay_credentials_for_active_modes():
@@ -195,6 +198,30 @@ class PaymentOrchestratorSettings(Document):
 	def clear_secret(self, fieldname):
 		self.set(fieldname, None)
 		remove_encrypted_password(self.doctype, self.name or self.doctype, fieldname)
+
+	def set_default_payment_action_access(self):
+		if self.allowed_payment_action_roles or self.allowed_payment_action_role_profiles:
+			return
+		for role in DEFAULT_PAYMENT_ACTION_ROLES:
+			self.append("allowed_payment_action_roles", {"role": role})
+
+	def validate_payment_action_access(self):
+		self.validate_unique_child_values("allowed_payment_action_roles", "role", "Allowed Payment Action Roles")
+		self.validate_unique_child_values(
+			"allowed_payment_action_role_profiles",
+			"role_profile",
+			"Allowed Payment Action Role Profiles",
+		)
+
+	def validate_unique_child_values(self, table_fieldname, value_fieldname, label):
+		seen = set()
+		for row in self.get(table_fieldname) or []:
+			value = (row.get(value_fieldname) or "").strip()
+			if not value:
+				continue
+			if value in seen:
+				frappe.throw(f"Duplicate value {value} in {label}")
+			seen.add(value)
 
 
 

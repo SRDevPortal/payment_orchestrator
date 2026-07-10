@@ -1,6 +1,9 @@
 import frappe
 
-from payment_orchestrator.api.common.validation import ensure_payment_action_permission
+from payment_orchestrator.api.common.validation import (
+    ensure_payment_action_permission,
+    has_payment_action_permission,
+)
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
 from payment_orchestrator.utils import (
     get_flag,
@@ -24,6 +27,7 @@ def get_settings_context():
         'enable_on_sales_invoice': get_flag(doc, 'enable_on_sales_invoice', 1),
         'enable_auto_allocation': get_flag(doc, 'enable_auto_allocation', 1),
         'show_action_buttons': get_flag(doc, 'show_action_buttons', 1),
+        'can_perform_payment_actions': has_payment_action_permission(settings=doc),
         'show_payment_summary_on_reference_doctypes': get_flag(doc, 'show_payment_summary_on_reference_doctypes', 1),
         'show_whatsapp_message_preview': get_flag(doc, 'show_whatsapp_message_preview'),
         'enable_razorpay': get_flag(doc, 'enable_razorpay', 1),

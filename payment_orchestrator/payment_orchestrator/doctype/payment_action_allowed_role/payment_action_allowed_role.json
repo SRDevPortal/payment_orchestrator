@@ -1,0 +1,23 @@
+{
+  "doctype": "DocType",
+  "name": "Payment Action Allowed Role",
+  "module": "Payment Orchestrator",
+  "custom": 0,
+  "istable": 1,
+  "editable_grid": 1,
+  "engine": "InnoDB",
+  "field_order": [
+    "role"
+  ],
+  "fields": [
+    {
+      "fieldname": "role",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "label": "Role",
+      "options": "Role",
+      "reqd": 1
+    }
+  ],
+  "permissions": []
+}

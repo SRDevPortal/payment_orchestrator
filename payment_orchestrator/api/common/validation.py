@@ -3,7 +3,7 @@ from frappe.utils import flt
 
 from payment_orchestrator.utils import get_settings
 
-PAYMENT_ACTION_ROLES = {"Accounts Manager", "Accounts User", "System Manager"}
+DEFAULT_PAYMENT_ACTION_ROLES = {"Accounts Manager", "Accounts User", "System Manager"}
 
 
 def allow_partial(settings, reference_doctype):
@@ -40,9 +40,45 @@ def ensure_reference_read_permission(reference_doctype, reference_name):
 
 
 def ensure_payment_action_permission():
-    roles = set(frappe.get_roles(frappe.session.user))
-    if not roles.intersection(PAYMENT_ACTION_ROLES):
+    if not has_payment_action_permission():
         frappe.throw("Not permitted to perform payment actions", frappe.PermissionError)
+
+
+def has_payment_action_permission(user=None, settings=None):
+    user = user or frappe.session.user
+    roles = set(frappe.get_roles(user))
+    if "System Manager" in roles:
+        return True
+
+    settings = settings or get_settings()
+    allowed_roles = payment_action_roles(settings)
+    allowed_role_profiles = payment_action_role_profiles(settings)
+
+    if roles.intersection(allowed_roles):
+        return True
+
+    role_profile = frappe.db.get_value("User", user, "role_profile_name")
+    return bool(role_profile and role_profile in allowed_role_profiles)
+
+
+def payment_action_roles(settings=None):
+    settings = settings or get_settings()
+    roles = _child_values(settings, "allowed_payment_action_roles", "role")
+    return roles or set(DEFAULT_PAYMENT_ACTION_ROLES)
+
+
+def payment_action_role_profiles(settings=None):
+    settings = settings or get_settings()
+    return _child_values(settings, "allowed_payment_action_role_profiles", "role_profile")
+
+
+def _child_values(doc, table_fieldname, value_fieldname):
+    rows = getattr(doc, table_fieldname, None) or []
+    return {
+        str(getattr(row, value_fieldname, "") or "").strip()
+        for row in rows
+        if str(getattr(row, value_fieldname, "") or "").strip()
+    }
 
 
 def ensure_payment_intent_read_permission(intent):

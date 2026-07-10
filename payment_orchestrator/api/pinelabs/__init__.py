@@ -4,6 +4,7 @@ import frappe
 from frappe.utils import cint, flt, now_datetime
 
 from payment_orchestrator.api.common.validation import (
+    ensure_payment_action_permission,
     ensure_payment_intent_action_permission,
     validate_patient_encounter_request,
 )
@@ -27,14 +28,8 @@ from payment_orchestrator.utils import (
     is_pinelabs_pos_enabled,
 )
 
-
-PAYMENT_ROLES = ("Accounts Manager", "Accounts User", "System Manager")
-
-
 def _require_payment_role():
-    user_roles = set(frappe.get_roles(frappe.session.user))
-    if not user_roles.intersection(PAYMENT_ROLES):
-        frappe.throw("Not permitted to request Pine Labs payments", frappe.PermissionError)
+    ensure_payment_action_permission()
 
 
 @frappe.whitelist()

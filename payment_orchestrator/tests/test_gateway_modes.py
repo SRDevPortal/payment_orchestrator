@@ -6,6 +6,11 @@ from unittest.mock import patch
 from payment_orchestrator.provider.pinelabs.payment_link import PineLabsPaymentLinkAdapter
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
 from payment_orchestrator.provider.razorpay.qr_code import RazorpayQRCodeAdapter, resolve_qr_image_url
+from payment_orchestrator.api.common.validation import (
+    has_payment_action_permission,
+    payment_action_role_profiles,
+    payment_action_roles,
+)
 from payment_orchestrator.api.pinelabs import pinelabs_amount, resolve_pos_request_type
 from payment_orchestrator.logic import _extract_payment_entity, _resolve_mode_of_payment
 from payment_orchestrator.api.whatsapp import ensure_whatsapp_supported_payment_intent
@@ -135,6 +140,58 @@ class ResetInactiveGatewayFieldsTests(TestCase):
         self.assertIsNone(settings.pinelabs_merchant_id)
         self.assertEqual(settings.pinelabs_base_url, PINELABS_BASE_URL)
         self.assertEqual(settings.cleared_secrets, ["pinelabs_online_client_secret", "pinelabs_security_token"])
+
+
+class PaymentActionAccessTests(TestCase):
+    def test_payment_action_roles_fall_back_to_legacy_account_roles(self):
+        settings = SimpleNamespace(allowed_payment_action_roles=[], allowed_payment_action_role_profiles=[])
+
+        self.assertEqual(
+            payment_action_roles(settings),
+            {"Accounts Manager", "Accounts User", "System Manager"},
+        )
+
+    def test_payment_action_roles_use_configured_rows(self):
+        settings = SimpleNamespace(
+            allowed_payment_action_roles=[SimpleNamespace(role="Payment Action User")],
+            allowed_payment_action_role_profiles=[],
+        )
+
+        self.assertEqual(payment_action_roles(settings), {"Payment Action User"})
+
+    def test_payment_action_role_profiles_use_configured_rows(self):
+        settings = SimpleNamespace(
+            allowed_payment_action_roles=[],
+            allowed_payment_action_role_profiles=[SimpleNamespace(role_profile="Vobiz Agent")],
+        )
+
+        self.assertEqual(payment_action_role_profiles(settings), {"Vobiz Agent"})
+
+    def test_has_payment_action_permission_allows_matching_role_profile(self):
+        settings = SimpleNamespace(
+            allowed_payment_action_roles=[SimpleNamespace(role="Payment Action User")],
+            allowed_payment_action_role_profiles=[SimpleNamespace(role_profile="Vobiz Agent")],
+        )
+        fake_frappe = SimpleNamespace(
+            get_roles=lambda user=None: ["Vobiz Agent"],
+            db=SimpleNamespace(get_value=lambda *args, **kwargs: "Vobiz Agent"),
+        )
+
+        with patch("payment_orchestrator.api.common.validation.frappe", fake_frappe):
+            self.assertTrue(has_payment_action_permission(user="agent@example.com", settings=settings))
+
+    def test_has_payment_action_permission_rejects_unconfigured_user(self):
+        settings = SimpleNamespace(
+            allowed_payment_action_roles=[SimpleNamespace(role="Payment Action User")],
+            allowed_payment_action_role_profiles=[SimpleNamespace(role_profile="Billing Agent")],
+        )
+        fake_frappe = SimpleNamespace(
+            get_roles=lambda user=None: ["Vobiz Agent"],
+            db=SimpleNamespace(get_value=lambda *args, **kwargs: "Vobiz Agent"),
+        )
+
+        with patch("payment_orchestrator.api.common.validation.frappe", fake_frappe):
+            self.assertFalse(has_payment_action_permission(user="agent@example.com", settings=settings))
 
 
 class ModeOfPaymentResolutionTests(TestCase):

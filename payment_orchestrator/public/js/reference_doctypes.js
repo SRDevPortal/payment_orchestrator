@@ -28,6 +28,7 @@ payment_orchestrator.is_saved_doc = function(frm) {
 payment_orchestrator.can_show_payment_actions = function(frm, settings) {
     if (!payment_orchestrator.is_saved_doc(frm)) return false;
     if (!settings.show_action_buttons || !payment_orchestrator.is_doctype_enabled(frm, settings)) return false;
+    if (!settings.can_perform_payment_actions) return false;
 
     if (frm.doctype === 'Patient Encounter') {
         return frm.doc.sr_encounter_type === 'Order' && Number(frm.doc.docstatus || 0) === 0;
