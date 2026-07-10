@@ -37,7 +37,7 @@ function render_payment_intent_overview(frm) {
     const status = classify_intent_status(doc);
     const received = classify_received_status(doc, status);
     const provider = classify_provider_status(doc);
-    const error_hint = provider.kind === 'danger' ? payment_error_hint(provider.label) : '';
+    const error_hint = provider.kind === 'danger' ? payment_error_hint(provider.raw_label || provider.label) : '';
     const links = payment_intent_links(doc);
 
     const html = `
@@ -63,7 +63,7 @@ function render_payment_intent_overview(frm) {
             ${error_hint ? `<div class="po-intent-alert po-intent-alert-danger">${escape_html(error_hint)}</div>` : ''}
             <div class="po-intent-grid">
                 ${metric(__('Requested'), format_currency_value(doc.amount_requested, doc.currency))}
-                ${metric(__('Paid'), format_currency_value(doc.amount_paid, doc.currency))}
+                ${metric(__('Received'), format_currency_value(doc.amount_paid, doc.currency))}
                 ${metric(__('Allocated'), format_currency_value(doc.amount_allocated, doc.currency))}
                 ${metric(__('Unallocated'), format_currency_value(doc.amount_unallocated, doc.currency))}
             </div>
@@ -264,15 +264,17 @@ function classify_intent_status(doc) {
 
 function classify_received_status(doc, fallback) {
     const amount_paid = Number(doc.amount_paid || 0);
-    if (amount_paid > 0) return { label: __('Paid'), kind: 'success' };
-    return { label: doc.status || __('Draft'), kind: fallback.kind };
+    if (amount_paid > 0) return { label: __('Payment Received'), kind: 'success' };
+    if (fallback.kind === 'danger') return { label: __('Not Received'), kind: 'danger' };
+    if (fallback.kind === 'warning' || fallback.kind === 'neutral') return { label: __('Not Received'), kind: fallback.kind };
+    return { label: __('Awaiting Payment'), kind: fallback.kind };
 }
 
 function classify_provider_status(doc) {
     const raw = doc.pos_failure_reason || doc.payment_status || doc.pos_request_status || doc.qr_status || doc.status || '';
     const value = String(raw || '').trim();
     const lower = value.toLowerCase();
-    if (!value) return { label: __('No Provider Status'), kind: 'neutral' };
+    if (!value) return { label: __('No Gateway Status'), kind: 'neutral' };
     if (
         lower.includes('invalid') ||
         lower.includes('failed') ||
@@ -280,17 +282,19 @@ function classify_provider_status(doc) {
         lower.includes('declined') ||
         lower.includes('reject')
     ) {
-        return { label: value, kind: 'danger' };
+        return { label: __('Gateway Failed'), kind: 'danger', raw_label: value };
     }
     if (lower.includes('approved') || lower.includes('captured') || lower === 'paid' || lower === 'processed') {
-        return { label: value, kind: 'success' };
+        return { label: __('Gateway Processed'), kind: 'success', raw_label: value };
     }
-    if (lower.includes('expired') || lower.includes('closed')) return { label: value, kind: 'warning' };
-    if (lower.includes('cancel')) return { label: value, kind: 'neutral' };
+    if (lower.includes('expired') || lower.includes('closed')) {
+        return { label: __('Gateway Expired'), kind: 'warning', raw_label: value };
+    }
+    if (lower.includes('cancel')) return { label: __('Gateway Cancelled'), kind: 'neutral', raw_label: value };
     if (lower.includes('uploaded') || lower.includes('requested') || lower.includes('active')) {
-        return { label: value, kind: 'pending' };
+        return { label: __('Gateway Pending'), kind: 'pending', raw_label: value };
     }
-    return { label: value, kind: 'info' };
+    return { label: __('Gateway Status Pending'), kind: 'info', raw_label: value };
 }
 
 function gateway_badge_kind(gateway) {

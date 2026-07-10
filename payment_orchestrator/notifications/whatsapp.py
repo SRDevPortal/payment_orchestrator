@@ -725,6 +725,7 @@ def payment_whatsapp_audit_values(recipient, channel_account=None, message=None,
         "last_whatsapp_content_type": content_type,
         "whatsapp_send_status": status,
         "last_whatsapp_error": error or None,
+        "sent_via": "WhatsApp",
     }
 
 

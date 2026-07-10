@@ -136,12 +136,29 @@ payment_orchestrator.payment_summary_fields = [
 ];
 
 payment_orchestrator.toggle_payment_summary_fields = function(frm, settings) {
-    const visible = payment_orchestrator.is_doctype_enabled(frm, settings);
+    const visible = payment_orchestrator.is_saved_doc(frm)
+        && payment_orchestrator.is_doctype_enabled(frm, settings)
+        && Boolean(settings.show_payment_summary_on_reference_doctypes);
     payment_orchestrator.payment_summary_fields.forEach((fieldname) => {
         if (frm.fields_dict[fieldname]) {
             frm.toggle_display(fieldname, visible);
         }
     });
+
+    if (!visible) {
+        payment_orchestrator.clear_payment_summary_display(frm);
+    }
+};
+
+payment_orchestrator.clear_payment_summary_display = function(frm) {
+    if (frm.fields_dict.po_payment_dashboard_html) {
+        frm.fields_dict.po_payment_dashboard_html.$wrapper.empty();
+    }
+
+    const dashboard_wrapper = frm.dashboard && (frm.dashboard.wrapper || frm.dashboard.parent);
+    if (dashboard_wrapper) {
+        $(dashboard_wrapper).find('.po-dashboard').closest('.form-dashboard-section').remove();
+    }
 };
 
 payment_orchestrator.get_pos_context = function(callback) {
@@ -198,7 +215,11 @@ payment_orchestrator.stop_payment_watcher = function(payment_intent) {
 };
 
 payment_orchestrator.escape_html = function(value) {
-    return frappe.utils.escape_html(String(value || ''));
+    return frappe.utils.escape_html(String(value ?? ''));
+};
+
+payment_orchestrator.format_currency = function(value, currency) {
+    return format_currency(flt(value || 0), currency || frappe.defaults.get_default('currency'));
 };
 
 payment_orchestrator.copy_text = function(value, message) {
@@ -257,6 +278,7 @@ payment_orchestrator.safe_external_url = function(value) {
 payment_orchestrator.render_dashboard_intent = function(row) {
     const payment_link_url = payment_orchestrator.safe_external_url(row.payment_link_url);
     const qr_code_url = payment_orchestrator.safe_external_url(row.qr_code_url);
+    const currency = row.currency;
     return `
         <div style="padding:8px 0;border-bottom:1px solid #eee;">
             <div><b>${payment_orchestrator.escape_html(row.name)}</b> - ${payment_orchestrator.escape_html(row.status)}</div>
@@ -264,9 +286,10 @@ payment_orchestrator.render_dashboard_intent = function(row) {
                 ${payment_orchestrator.escape_html(row.gateway || '')}
                 ${payment_orchestrator.escape_html(row.payment_mode || '')}
                 | ${payment_orchestrator.escape_html(row.request_type || '')}
-                | Requested: ${payment_orchestrator.escape_html(row.amount_requested)}
-                | Paid: ${payment_orchestrator.escape_html(row.amount_paid)}
-                | Allocated: ${payment_orchestrator.escape_html(row.amount_allocated)}
+                | Requested: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_requested, currency))}
+                | Received: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_paid, currency))}
+                | Allocated: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_allocated, currency))}
+                | Unallocated: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_unallocated, currency))}
             </div>
             ${payment_link_url ? `<div style="font-size:12px;"><a href="${payment_orchestrator.escape_html(payment_link_url)}" target="_blank" rel="noopener noreferrer">Open Payment Link</a></div>` : ''}
             ${qr_code_url ? `<div style="font-size:12px;"><a href="${payment_orchestrator.escape_html(qr_code_url)}" target="_blank" rel="noopener noreferrer">Open QR Code</a></div>` : ''}
@@ -292,7 +315,12 @@ payment_orchestrator.render_payment_link_result = function(data) {
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:center;">
                 ${payment_orchestrator.payment_result_button(__('Send WhatsApp'), 'whatsapp', data.payment_intent || '')}
                 ${show_message_preview ? payment_orchestrator.payment_result_button(__('Show Message'), 'show_message', data.payment_intent || '') : ''}
-                ${payment_orchestrator.payment_result_button(__('Copy Link'), 'copy', data.payment_link_url || '')}
+                ${payment_orchestrator.payment_result_button(
+                    __('Copy Link'),
+                    'copy',
+                    data.payment_link_url || '',
+                    `data-po-intent="${payment_orchestrator.escape_html(data.payment_intent || '')}"`
+                )}
                 ${payment_orchestrator.payment_result_button(__('Open Link'), 'open', data.payment_link_url || '')}
             </div>
         </div>
@@ -346,6 +374,7 @@ payment_orchestrator.bind_payment_result_actions = function() {
 
         if (action === 'copy') {
             payment_orchestrator.copy_text(value, __('Copied'));
+            payment_orchestrator.mark_payment_intent_shared($button.attr('data-po-intent'), 'Manual Copy');
         } else if (action === 'open') {
             window.open(value, '_blank', 'noopener');
         } else if (action === 'download') {
@@ -355,6 +384,17 @@ payment_orchestrator.bind_payment_result_actions = function() {
         } else if (action === 'show_message') {
             payment_orchestrator.toggle_payment_whatsapp_message(value, $button);
         }
+    });
+};
+
+payment_orchestrator.mark_payment_intent_shared = function(payment_intent, sent_via) {
+    if (!payment_intent || !sent_via) return;
+    frappe.call({
+        method: 'payment_orchestrator.api.common.intents.mark_payment_intent_shared',
+        args: {
+            payment_intent,
+            sent_via,
+        },
     });
 };
 
@@ -725,13 +765,14 @@ payment_orchestrator.render_dashboard = function(frm) {
             const data = r.message || {};
             const summary = data.summary || {};
             const intents = data.intents || [];
+            const currency = summary.currency;
             const html = `
                 <div class="po-dashboard card" style="padding:12px;margin-top:12px;">
                     <div style="display:flex;gap:24px;flex-wrap:wrap;">
-                        <div><div style="font-size:11px;color:#777;">Requested</div><div style="font-size:18px;font-weight:600;">${summary.total_requested || 0}</div></div>
-                        <div><div style="font-size:11px;color:#777;">Paid</div><div style="font-size:18px;font-weight:600;">${summary.total_paid || 0}</div></div>
-                        <div><div style="font-size:11px;color:#777;">Allocated</div><div style="font-size:18px;font-weight:600;">${summary.total_allocated || 0}</div></div>
-                        <div><div style="font-size:11px;color:#777;">Unallocated</div><div style="font-size:18px;font-weight:600;">${summary.total_unallocated || 0}</div></div>
+                        <div><div style="font-size:11px;color:#777;">Requested Amount</div><div style="font-size:18px;font-weight:600;">${payment_orchestrator.escape_html(payment_orchestrator.format_currency(summary.total_requested, currency))}</div></div>
+                        <div><div style="font-size:11px;color:#777;">Received Amount</div><div style="font-size:18px;font-weight:600;">${payment_orchestrator.escape_html(payment_orchestrator.format_currency(summary.total_paid, currency))}</div></div>
+                        <div><div style="font-size:11px;color:#777;">Allocated Amount</div><div style="font-size:18px;font-weight:600;">${payment_orchestrator.escape_html(payment_orchestrator.format_currency(summary.total_allocated, currency))}</div></div>
+                        <div><div style="font-size:11px;color:#777;">Unallocated Amount</div><div style="font-size:18px;font-weight:600;">${payment_orchestrator.escape_html(payment_orchestrator.format_currency(summary.total_unallocated, currency))}</div></div>
                     </div>
                     <hr>
                     <div><b>Recent Payment Intents</b></div>

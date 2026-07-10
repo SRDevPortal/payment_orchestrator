@@ -4,6 +4,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from payment_orchestrator.provider.pinelabs.payment_link import PineLabsPaymentLinkAdapter
+from payment_orchestrator.provider.pinelabs.online import format_online_api_error
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
 from payment_orchestrator.provider.razorpay.qr_code import RazorpayQRCodeAdapter, resolve_qr_image_url
 from payment_orchestrator.api.common.validation import (
@@ -782,6 +783,24 @@ class PineLabsPaymentLinkAdapterTests(TestCase):
 
         self.assertEqual(payload["callback_url"], "https://site.example/api/method/payment_orchestrator.api.webhooks.pinelabs")
         self.assertEqual(payload["failure_callback_url"], "https://site.example/api/method/payment_orchestrator.api.webhooks.pinelabs")
+
+    def test_merchant_details_error_is_actionable(self):
+        settings = self._settings(
+            secret="secret",
+            pinelabs_payment_link_mode="Test",
+            pinelabs_online_base_url="https://pluraluat.v2.pinepg.in",
+        )
+
+        message = format_online_api_error(
+            500,
+            {"code": "INTERNAL_ERROR", "message": "Could not fetch merchant details"},
+            settings,
+        )
+
+        self.assertIn("Could not fetch merchant details", message)
+        self.assertIn("Client ID and Client Secret are mapped", message)
+        self.assertIn("Payment Links are enabled", message)
+        self.assertIn("Test", message)
 
 
 class RazorpayWebhookPayloadTests(TestCase):

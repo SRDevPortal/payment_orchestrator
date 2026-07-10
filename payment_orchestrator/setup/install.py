@@ -19,7 +19,7 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
         {'fieldname': 'po_total_unallocated', 'label': 'Total Unallocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_allocated', 'read_only': 1},
-        {'fieldname': 'po_last_payment_intent', 'label': 'Last Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
+        {'fieldname': 'po_last_payment_intent', 'label': 'Latest Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
         {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
     'Patient Encounter': [
@@ -28,7 +28,7 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
         {'fieldname': 'po_total_unallocated', 'label': 'Total Unallocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_allocated', 'read_only': 1},
-        {'fieldname': 'po_last_payment_intent', 'label': 'Last Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
+        {'fieldname': 'po_last_payment_intent', 'label': 'Latest Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
         {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
     'Sales Order': [
@@ -37,7 +37,7 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
         {'fieldname': 'po_total_unallocated', 'label': 'Total Unallocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_allocated', 'read_only': 1},
-        {'fieldname': 'po_last_payment_intent', 'label': 'Last Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
+        {'fieldname': 'po_last_payment_intent', 'label': 'Latest Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
         {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
     'Sales Invoice': [
@@ -46,7 +46,7 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
         {'fieldname': 'po_total_unallocated', 'label': 'Total Unallocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_allocated', 'read_only': 1},
-        {'fieldname': 'po_last_payment_intent', 'label': 'Last Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
+        {'fieldname': 'po_last_payment_intent', 'label': 'Latest Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_total_unallocated', 'read_only': 1},
         {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
 }

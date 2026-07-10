@@ -200,7 +200,7 @@ class PaymentOrchestratorSettings(Document):
 		remove_encrypted_password(self.doctype, self.name or self.doctype, fieldname)
 
 	def set_default_payment_action_access(self):
-		if self.allowed_payment_action_roles or self.allowed_payment_action_role_profiles:
+		if self.get("allowed_payment_action_roles") or self.get("allowed_payment_action_role_profiles"):
 			return
 		for role in DEFAULT_PAYMENT_ACTION_ROLES:
 			self.append("allowed_payment_action_roles", {"role": role})
