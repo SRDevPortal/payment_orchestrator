@@ -38,6 +38,9 @@ frappe.ui.form.on('Payment Orchestrator Settings', {
 });
 
 function payment_orchestrator_settings_setup(frm) {
+    frm.set_query('encounter_status_after_payment', () => ({
+        filters: { is_active: 1 }
+    }));
     payment_orchestrator_settings_apply_visibility(frm);
     payment_orchestrator_settings_disable_credential_autofill(frm);
     payment_orchestrator_settings_add_actions(frm);
@@ -100,8 +103,6 @@ function payment_orchestrator_settings_apply_visibility(frm) {
         'create_unallocated_credit_for_excess',
         'auto_mark_reference_paid_when_fully_allocated',
         'column_break_behavior_1',
-        'default_advance_account',
-        'default_receivable_account',
         'default_cost_center',
         'section_ui',
         'section_security',

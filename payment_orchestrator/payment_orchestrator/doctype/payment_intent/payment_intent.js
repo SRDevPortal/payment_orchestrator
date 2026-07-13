@@ -7,6 +7,7 @@ frappe.ui.form.on('Payment Intent', {
         const locked_statuses = [
             'Paid',
             'Partially Allocated',
+            'Partially Refunded',
             'Allocated',
             'Refunded',
             'Cancelled',
@@ -64,6 +65,7 @@ function render_payment_intent_overview(frm) {
             <div class="po-intent-grid">
                 ${metric(__('Requested'), format_currency_value(doc.amount_requested, doc.currency))}
                 ${metric(__('Received'), format_currency_value(doc.amount_paid, doc.currency))}
+                ${metric(__('Refunded'), format_currency_value(doc.amount_refunded, doc.currency))}
                 ${metric(__('Allocated'), format_currency_value(doc.amount_allocated, doc.currency))}
                 ${metric(__('Unallocated'), format_currency_value(doc.amount_unallocated, doc.currency))}
             </div>
@@ -256,7 +258,7 @@ function extract_transaction_details(payload) {
 function classify_intent_status(doc) {
     const status = String(doc.status || '').toLowerCase();
     if (['allocated', 'paid'].includes(status)) return { kind: 'success' };
-    if (['partially allocated', 'partially paid'].includes(status)) return { kind: 'info' };
+    if (['partially allocated', 'partially paid', 'partially refunded'].includes(status)) return { kind: 'info' };
     if (['expired'].includes(status)) return { kind: 'warning' };
     if (['cancelled', 'refunded'].includes(status)) return { kind: 'neutral' };
     return { kind: 'pending' };
@@ -264,6 +266,9 @@ function classify_intent_status(doc) {
 
 function classify_received_status(doc, fallback) {
     const amount_paid = Number(doc.amount_paid || 0);
+    const amount_refunded = Number(doc.amount_refunded || 0);
+    if (amount_paid > 0 && amount_refunded >= amount_paid) return { label: __('Fully Refunded'), kind: 'neutral' };
+    if (amount_refunded > 0) return { label: __('Partially Refunded'), kind: 'info' };
     if (amount_paid > 0) return { label: __('Payment Received'), kind: 'success' };
     if (fallback.kind === 'danger') return { label: __('Not Received'), kind: 'danger' };
     if (fallback.kind === 'warning' || fallback.kind === 'neutral') return { label: __('Not Received'), kind: fallback.kind };

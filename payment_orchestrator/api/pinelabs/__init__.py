@@ -11,8 +11,10 @@ from payment_orchestrator.api.common.validation import (
 from payment_orchestrator.logic import (
     allocate_available_amount,
     create_payment_entry_for_intent,
+    is_payment_intent_fully_paid,
     process_provider_payment_success,
     refresh_intent_and_reference,
+    update_encounter_status_after_payment,
 )
 from payment_orchestrator.provider.pinelabs.online import PineLabsOnlineClient
 from payment_orchestrator.provider.pinelabs.payment_link import PineLabsPaymentLinkAdapter
@@ -488,6 +490,9 @@ def _is_valid_pos_request_id(pos_request_id):
 
 
 def apply_pos_success(intent, response):
+    frappe.db.sql('select name from `tabPayment Intent` where name=%s for update', intent.name)
+    intent.reload()
+    was_fully_paid = is_payment_intent_fully_paid(intent)
     amount = pinelabs_amount(response) or flt(intent.amount_requested)
     settings = get_settings()
     if amount > flt(intent.amount_requested or 0) and not getattr(settings, "allow_overpayment", 0):
@@ -503,10 +508,14 @@ def apply_pos_success(intent, response):
     intent.db_set("amount_paid", amount)
     intent.db_set("amount_unallocated", amount)
     intent.db_set("paid_on", now_datetime())
-    payment_entry = create_payment_entry_for_intent(intent)
-    intent.db_set("payment_entry", payment_entry)
-    allocate_available_amount(intent, payment_entry)
+    payment_entry = None
+    if settings.auto_create_payment_entry_on_success:
+        payment_entry = create_payment_entry_for_intent(intent)
+        intent.db_set("payment_entry", payment_entry)
+    if settings.enable_auto_allocation and payment_entry:
+        allocate_available_amount(intent, payment_entry)
     refresh_intent_and_reference(intent)
+    update_encounter_status_after_payment(intent, was_fully_paid=was_fully_paid)
     return payment_entry
 
 

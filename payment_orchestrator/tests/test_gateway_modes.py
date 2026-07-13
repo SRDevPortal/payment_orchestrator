@@ -13,7 +13,16 @@ from payment_orchestrator.api.common.validation import (
     payment_action_roles,
 )
 from payment_orchestrator.api.pinelabs import pinelabs_amount, resolve_pos_request_type
-from payment_orchestrator.logic import _extract_payment_entity, _resolve_mode_of_payment
+from payment_orchestrator.api.razorpay import refund_payment
+from payment_orchestrator.api.dashboard import _get_reference_intents
+from payment_orchestrator.logic import (
+    _extract_payment_entity,
+    _resolve_paid_to_account,
+    _resolve_mode_of_payment,
+    process_provider_payment_success,
+    update_encounter_status_after_payment,
+)
+from payment_orchestrator.api.webhooks import _mark_refunded, razorpay as razorpay_webhook
 from payment_orchestrator.api.whatsapp import ensure_whatsapp_supported_payment_intent
 from payment_orchestrator.notifications.whatsapp import (
     build_payment_template_payload,
@@ -141,6 +150,366 @@ class ResetInactiveGatewayFieldsTests(TestCase):
         self.assertIsNone(settings.pinelabs_merchant_id)
         self.assertEqual(settings.pinelabs_base_url, PINELABS_BASE_URL)
         self.assertEqual(settings.cleared_secrets, ["pinelabs_online_client_secret", "pinelabs_security_token"])
+
+
+class EncounterStatusAfterPaymentTests(TestCase):
+    def _intent(self, **overrides):
+        values = {
+            "name": "PI-0001",
+            "reference_doctype": "Patient Encounter",
+            "reference_name": "ENC-0001",
+            "amount_requested": 100,
+            "amount_paid": 100,
+            "provider_payment_id": "pay_123",
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    def _fake_frappe(self, encounter_status="Payment Approvel Requested", status_active=1):
+        state = {
+            "encounter_status": encounter_status,
+            "set_calls": [],
+            "comments": [],
+            "errors": [],
+        }
+
+        def exists(doctype, name):
+            return (doctype, name) in {
+                ("Patient Encounter", "ENC-0001"),
+                ("DocType", "SR Encounter Status"),
+                ("SR Encounter Status", "PRX Requested"),
+            }
+
+        def get_value(doctype, name, fieldname):
+            if doctype == "Patient Encounter" and fieldname == "sr_encounter_status":
+                return state["encounter_status"]
+            if doctype == "SR Encounter Status" and fieldname == "is_active":
+                return status_active
+            return None
+
+        def set_value(doctype, name, fieldname, value):
+            state["set_calls"].append((doctype, name, fieldname, value))
+            state["encounter_status"] = value
+
+        fake = SimpleNamespace(
+            db=SimpleNamespace(exists=exists, get_value=get_value, set_value=set_value),
+            get_meta=lambda doctype: SimpleNamespace(
+                has_field=lambda fieldname: fieldname in {"sr_encounter_status", "is_active"}
+            ),
+            get_doc=lambda doctype, name: SimpleNamespace(
+                add_comment=lambda comment_type, text: state["comments"].append((comment_type, text))
+            ),
+            log_error=lambda message, title: state["errors"].append((message, title)),
+        )
+        return fake, state
+
+    def test_full_payment_updates_configured_encounter_status(self):
+        fake_frappe, state = self._fake_frappe()
+        settings = SimpleNamespace(encounter_status_after_payment="PRX Requested")
+
+        with patch("payment_orchestrator.logic.frappe", fake_frappe), patch(
+            "payment_orchestrator.logic.get_settings", return_value=settings
+        ):
+            result = update_encounter_status_after_payment(self._intent())
+
+        self.assertEqual(result, "PRX Requested")
+        self.assertEqual(state["encounter_status"], "PRX Requested")
+        self.assertEqual(len(state["set_calls"]), 1)
+        self.assertIn("Payment Intent PI-0001", state["comments"][0][1])
+
+    def test_full_payment_replaces_current_status_with_configured_status(self):
+        fake_frappe, state = self._fake_frappe(encounter_status="PRX Ready")
+        settings = SimpleNamespace(encounter_status_after_payment="PRX Requested")
+
+        with patch("payment_orchestrator.logic.frappe", fake_frappe), patch(
+            "payment_orchestrator.logic.get_settings", return_value=settings
+        ):
+            result = update_encounter_status_after_payment(self._intent())
+
+        self.assertEqual(result, "PRX Requested")
+        self.assertEqual(state["encounter_status"], "PRX Requested")
+        self.assertEqual(len(state["set_calls"]), 1)
+
+    def test_partial_payment_does_not_update_encounter_status(self):
+        fake_frappe, state = self._fake_frappe()
+
+        with patch("payment_orchestrator.logic.frappe", fake_frappe):
+            result = update_encounter_status_after_payment(self._intent(amount_paid=99.99))
+
+        self.assertIsNone(result)
+        self.assertEqual(state["set_calls"], [])
+
+    def test_duplicate_success_does_not_repeat_status_update(self):
+        fake_frappe, state = self._fake_frappe()
+
+        with patch("payment_orchestrator.logic.frappe", fake_frappe):
+            result = update_encounter_status_after_payment(self._intent(), was_fully_paid=True)
+
+        self.assertIsNone(result)
+        self.assertEqual(state["set_calls"], [])
+
+    def test_first_full_payment_uses_configured_status_without_hardcoded_allowlist(self):
+        fake_frappe, state = self._fake_frappe(encounter_status="Ready to Dispatch")
+        settings = SimpleNamespace(encounter_status_after_payment="PRX Requested")
+
+        with patch("payment_orchestrator.logic.frappe", fake_frappe), patch(
+            "payment_orchestrator.logic.get_settings", return_value=settings
+        ):
+            result = update_encounter_status_after_payment(self._intent())
+
+        self.assertEqual(result, "PRX Requested")
+        self.assertEqual(state["encounter_status"], "PRX Requested")
+        self.assertEqual(len(state["set_calls"]), 1)
+
+    def test_inactive_target_status_is_not_applied(self):
+        fake_frappe, state = self._fake_frappe(status_active=0)
+        settings = SimpleNamespace(encounter_status_after_payment="PRX Requested")
+
+        with patch("payment_orchestrator.logic.frappe", fake_frappe), patch(
+            "payment_orchestrator.logic.get_settings", return_value=settings
+        ):
+            result = update_encounter_status_after_payment(self._intent())
+
+        self.assertIsNone(result)
+        self.assertEqual(state["set_calls"], [])
+        self.assertIn("inactive", state["errors"][0][0])
+
+    def test_status_changed_after_request_is_not_overwritten(self):
+        fake_frappe, state = self._fake_frappe(encounter_status="Ready to Dispatch")
+        settings = SimpleNamespace(encounter_status_after_payment="PRX Requested")
+        intent = self._intent(encounter_status_at_request="Draft")
+
+        with patch("payment_orchestrator.logic.frappe", fake_frappe), patch(
+            "payment_orchestrator.logic.get_settings", return_value=settings
+        ):
+            result = update_encounter_status_after_payment(intent)
+
+        self.assertIsNone(result)
+        self.assertEqual(state["encounter_status"], "Ready to Dispatch")
+        self.assertEqual(state["set_calls"], [])
+
+
+class PaymentSuccessHardeningTests(TestCase):
+    def test_unknown_payment_intent_is_ignored(self):
+        payload = {
+            "payload": {
+                "payment": {
+                    "entity": {
+                        "id": "pay_external",
+                        "amount": 100,
+                        "status": "captured",
+                        "notes": {"payment_intent": "missing-intent"},
+                    }
+                }
+            }
+        }
+        fake_frappe = SimpleNamespace(
+            db=SimpleNamespace(exists=lambda *args, **kwargs: False, get_value=lambda *args, **kwargs: None)
+        )
+
+        with patch("payment_orchestrator.logic.frappe", fake_frappe):
+            result = process_provider_payment_success(payload)
+
+        self.assertTrue(result["ignored"])
+        self.assertIn("local Payment Intent", result["reason"])
+
+    def test_paid_to_uses_mode_of_payment_account(self):
+        intent = SimpleNamespace(
+            company="Test Company",
+            request_channel="Payment Link",
+            payment_mode="Payment Link",
+            gateway="Razorpay",
+        )
+        settings = SimpleNamespace(
+            company="Test Company",
+            default_mode_of_payment="Razorpay",
+            default_receivable_account="Debtors - TC",
+            default_advance_account="Customer Advances - TC",
+        )
+
+        with patch(
+            "payment_orchestrator.logic.mode_of_payment_account",
+            return_value="Razorpay Bank - TC",
+        ):
+            account = _resolve_paid_to_account(intent, settings, "Razorpay")
+
+        self.assertEqual(account, "Razorpay Bank - TC")
+
+
+class RefundWebhookTests(TestCase):
+    def test_partial_refund_amount_is_passed_in_major_units(self):
+        payload = {
+            "event": "refund.processed",
+            "payload": {
+                "refund": {
+                    "entity": {
+                        "id": "rfnd_123",
+                        "payment_id": "pay_123",
+                        "amount": 2550,
+                    }
+                }
+            },
+        }
+
+        with patch("payment_orchestrator.api.webhooks.process_provider_refund") as process_refund:
+            _mark_refunded(payload)
+
+        process_refund.assert_called_once_with(
+            payment_id="pay_123",
+            refund_id="rfnd_123",
+            refund_amount=25.5,
+            provider_status="refund.processed",
+        )
+
+    def test_refund_api_rejects_amount_above_remaining_refundable_amount(self):
+        intent = SimpleNamespace(
+            gateway="Razorpay",
+            provider_payment_id="pay_123",
+            amount_paid=100,
+            amount_refunded=30,
+            refund_status=None,
+        )
+        settings = SimpleNamespace(enable_refunds=1)
+        fake_frappe = SimpleNamespace(
+            get_doc=lambda doctype, name: intent,
+            throw=lambda message: (_ for _ in ()).throw(Exception(message)),
+        )
+
+        with patch("payment_orchestrator.api.razorpay.frappe", fake_frappe), patch(
+            "payment_orchestrator.api.razorpay.get_settings", return_value=settings
+        ), patch("payment_orchestrator.api.razorpay.ensure_payment_action_permission"), patch(
+            "payment_orchestrator.api.razorpay.ensure_payment_intent_action_permission"
+        ):
+            with self.assertRaisesRegex(Exception, "remaining refundable amount"):
+                refund_payment("PI-0001", amount=71)
+
+
+class WebhookIngressTests(TestCase):
+    def test_invalid_razorpay_signature_is_rejected_before_event_insert(self):
+        settings = SimpleNamespace(get_password=lambda fieldname: "webhook-secret")
+        fake_frappe = SimpleNamespace(
+            request=SimpleNamespace(get_data=lambda as_text=False: "{}"),
+            get_request_header=lambda name: "bad-signature",
+            local=SimpleNamespace(response={}),
+            get_doc=lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("invalid webhook must not create an event")
+            ),
+        )
+
+        with patch("payment_orchestrator.api.webhooks.frappe", fake_frappe), patch(
+            "payment_orchestrator.api.webhooks.get_settings", return_value=settings
+        ), patch(
+            "payment_orchestrator.api.webhooks.is_razorpay_webhook_enabled", return_value=True
+        ), patch(
+            "payment_orchestrator.api.webhooks.verify_razorpay_webhook_signature", return_value=False
+        ):
+            result = razorpay_webhook()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(fake_frappe.local.response["http_status_code"], 400)
+
+    def test_processing_failure_rolls_back_before_failed_event_is_saved(self):
+        calls = []
+        event = SimpleNamespace(
+            name="EVT-0001",
+            insert=lambda **kwargs: calls.append("insert"),
+            db_set=lambda *args, **kwargs: calls.append("event_db_set"),
+        )
+        settings = SimpleNamespace(
+            get_password=lambda fieldname: "webhook-secret",
+            store_full_webhook_payload=0,
+            enable_duplicate_webhook_guard=1,
+        )
+        fake_frappe = SimpleNamespace(
+            request=SimpleNamespace(get_data=lambda as_text=False: '{"event":"payment.captured"}'),
+            get_request_header=lambda name: "valid-signature",
+            local=SimpleNamespace(response={}),
+            get_doc=lambda *args, **kwargs: event,
+            get_traceback=lambda: "processing traceback",
+            db=SimpleNamespace(
+                commit=lambda: calls.append("commit"),
+                rollback=lambda: calls.append("rollback"),
+                exists=lambda *args, **kwargs: False,
+                set_value=lambda *args, **kwargs: calls.append("failed_event_saved"),
+            ),
+        )
+
+        with patch("payment_orchestrator.api.webhooks.frappe", fake_frappe), patch(
+            "payment_orchestrator.api.webhooks.get_settings", return_value=settings
+        ), patch(
+            "payment_orchestrator.api.webhooks.is_razorpay_webhook_enabled", return_value=True
+        ), patch(
+            "payment_orchestrator.api.webhooks.verify_razorpay_webhook_signature", return_value=True
+        ), patch(
+            "payment_orchestrator.api.webhooks._dispatch_event", side_effect=RuntimeError("processing failed")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "processing failed"):
+                razorpay_webhook()
+
+        rollback_index = calls.index("rollback")
+        save_index = calls.index("failed_event_saved")
+        self.assertLess(rollback_index, save_index)
+        self.assertEqual(calls[-1], "commit")
+
+
+class ReferenceDashboardTests(TestCase):
+    def test_sales_invoice_uses_scoped_filters_and_deduplicates_intents(self):
+        direct = {
+            "name": "PI-DIRECT",
+            "modified": datetime(2026, 7, 13, 10, 0),
+        }
+        linked = {
+            "name": "PI-LINKED",
+            "modified": datetime(2026, 7, 13, 11, 0),
+        }
+        calls = []
+
+        def get_all(doctype, **kwargs):
+            calls.append(kwargs)
+            if kwargs["filters"] == {
+                "reference_doctype": "Sales Invoice",
+                "reference_name": "SRI-2627-000016",
+            }:
+                return [direct]
+            if kwargs["filters"] == {"sales_invoice": "SRI-2627-000016"}:
+                return [linked, direct]
+            return [{"name": "PI-OTHER-INVOICE"}]
+
+        query_args = {
+            "fields": ["name", "modified"],
+            "order_by": "modified desc",
+            "limit": 20,
+        }
+        fake_frappe = SimpleNamespace(get_all=get_all)
+
+        with patch("payment_orchestrator.api.dashboard.frappe", fake_frappe):
+            intents = _get_reference_intents(
+                "Sales Invoice", "SRI-2627-000016", query_args
+            )
+
+        self.assertEqual([row["name"] for row in intents], ["PI-LINKED", "PI-DIRECT"])
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all("or_filters" not in call for call in calls))
+
+    def test_other_reference_doctypes_keep_exact_reference_filter(self):
+        calls = []
+        fake_frappe = SimpleNamespace(
+            get_all=lambda doctype, **kwargs: calls.append(kwargs) or []
+        )
+        query_args = {"fields": ["name"], "order_by": "modified desc", "limit": 20}
+
+        with patch("payment_orchestrator.api.dashboard.frappe", fake_frappe):
+            _get_reference_intents(
+                "Patient Encounter", "HLC-ENC-2026-00110", query_args
+            )
+
+        self.assertEqual(
+            calls[0]["filters"],
+            {
+                "reference_doctype": "Patient Encounter",
+                "reference_name": "HLC-ENC-2026-00110",
+            },
+        )
 
 
 class PaymentActionAccessTests(TestCase):

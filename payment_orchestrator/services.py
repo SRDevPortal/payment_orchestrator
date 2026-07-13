@@ -137,6 +137,7 @@ def create_payment_intent_doc(
         'lead': context.get('lead'),
         'patient': context.get('patient'),
         'encounter': context.get('encounter'),
+        'encounter_status_at_request': _encounter_status_at_request(reference_doctype, reference_name),
         'sales_order': context.get('sales_order'),
         'sales_invoice': context.get('sales_invoice'),
         'requested_on': now_ts(),
@@ -154,6 +155,14 @@ def _default_gateway_for_mode(payment_mode):
     if payment_mode == 'POS':
         return 'Pine Labs'
     return 'Razorpay'
+
+
+def _encounter_status_at_request(reference_doctype, reference_name):
+    if reference_doctype != 'Patient Encounter':
+        return None
+    if not frappe.get_meta('Patient Encounter').has_field('sr_encounter_status'):
+        return None
+    return frappe.db.get_value('Patient Encounter', reference_name, 'sr_encounter_status')
 
 
 def get_allocation_targets(intent) -> list[dict]:
@@ -186,7 +195,7 @@ def update_reference_payment_summary(reference_doctype: str, reference_name: str
     total_requested = frappe.db.sql(
         f"""
         select coalesce(sum(amount_requested), 0) as total_requested,
-               coalesce(sum(amount_paid), 0) as total_paid,
+               coalesce(sum(amount_paid - coalesce(amount_refunded, 0)), 0) as total_paid,
                coalesce(sum(amount_allocated), 0) as total_allocated,
                coalesce(sum(amount_unallocated), 0) as total_unallocated
         from `tabPayment Intent`

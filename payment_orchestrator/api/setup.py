@@ -52,6 +52,7 @@ def get_setup_status():
 		"has_webhook_secret": bool(settings.get_password("webhook_secret", raise_exception=False)),
 		"enable_on_crm_lead": get_flag(settings, "enable_on_crm_lead", 1),
 		"enable_on_patient_encounter": settings.enable_on_patient_encounter,
+		"encounter_status_after_payment": getattr(settings, "encounter_status_after_payment", None),
 		"enable_on_sales_order": settings.enable_on_sales_order,
 		"enable_on_sales_invoice": settings.enable_on_sales_invoice,
 		"modes_of_payment": get_mode_of_payment_statuses(settings.company),

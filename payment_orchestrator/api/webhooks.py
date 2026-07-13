@@ -5,7 +5,7 @@ from urllib.parse import parse_qsl
 import frappe
 from frappe.utils import escape_html
 
-from payment_orchestrator.logic import process_provider_payment_success
+from payment_orchestrator.logic import process_provider_payment_success, process_provider_refund
 from payment_orchestrator.api.pinelabs import (
     apply_pos_success as _apply_pinelabs_success,
     is_payment_link_success as _is_pinelabs_payment_link_success,
@@ -15,6 +15,7 @@ from payment_orchestrator.api.pinelabs import (
 from payment_orchestrator.provider.pinelabs.online import PineLabsOnlineClient
 from payment_orchestrator.provider.pinelabs.pos import PineLabsPOSAdapter
 from payment_orchestrator.utils import (
+    get_flag,
     get_settings,
     is_pinelabs_postback_enabled,
     is_razorpay_webhook_enabled,
@@ -23,11 +24,30 @@ from payment_orchestrator.utils import (
 )
 
 
+MAX_WEBHOOK_PAYLOAD_BYTES = 1024 * 1024
+
+
 @frappe.whitelist(allow_guest=True)
 def razorpay():
     payload = frappe.request.get_data(as_text=True) or '{}'
+    if not _validate_payload_size(payload):
+        return {'ok': False, 'message': 'Webhook payload is too large'}
     signature = frappe.get_request_header('X-Razorpay-Signature')
     settings = get_settings()
+    if not is_razorpay_webhook_enabled(settings=settings):
+        return {'ok': True, 'ignored': True, 'reason': 'Razorpay webhook processing disabled'}
+
+    secret = settings.get_password('webhook_secret')
+    if not verify_razorpay_webhook_signature(payload, signature, secret):
+        frappe.local.response['http_status_code'] = 400
+        return {'ok': False, 'message': 'Invalid signature'}
+
+    try:
+        data = json.loads(payload)
+    except (TypeError, ValueError):
+        frappe.local.response['http_status_code'] = 400
+        return {'ok': False, 'message': 'Invalid JSON payload'}
+
     guard_key = hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
     event = frappe.get_doc({
@@ -35,7 +55,7 @@ def razorpay():
         'provider': 'Razorpay',
         'received_on': now_ts(),
         'payload': payload if settings.store_full_webhook_payload else '{}',
-        'verification_status': 'Pending',
+        'verification_status': 'Verified',
         'processing_status': 'Pending',
         'duplicate_guard_key': guard_key,
     })
@@ -50,22 +70,6 @@ def razorpay():
         event.db_set('processing_status', 'Duplicate')
         return {'ok': True, 'duplicate': True}
 
-    if not is_razorpay_webhook_enabled(settings=settings):
-        event.db_set('processing_status', 'Ignored')
-        event.db_set('error_message', 'Razorpay webhook processing disabled in settings')
-        return {'ok': True, 'ignored': True}
-
-    secret = settings.get_password('webhook_secret')
-    if not verify_razorpay_webhook_signature(payload, signature, secret):
-        event.db_set('verification_status', 'Rejected')
-        event.db_set('processing_status', 'Failed')
-        event.db_set('error_message', 'Invalid webhook signature')
-        frappe.db.commit()
-        frappe.local.response['http_status_code'] = 400
-        return {'ok': False, 'message': 'Invalid signature'}
-
-    data = json.loads(payload)
-    event.db_set('verification_status', 'Verified')
     event.db_set('event_type', data.get('event'))
     event.db_set('event_id', _resolve_event_id(data))
 
@@ -73,6 +77,9 @@ def razorpay():
         result = _dispatch_event(data, event)
         if result.get('duplicate'):
             event.db_set('processing_status', 'Duplicate')
+        elif result.get('ignored'):
+            event.db_set('processing_status', 'Ignored')
+            event.db_set('error_message', result.get('reason') or f"Ignored event {result.get('event') or ''}")
         else:
             event.db_set('processing_status', 'Processed')
         if result.get('payment_intent'):
@@ -81,8 +88,14 @@ def razorpay():
             event.db_set('payment_entry', result.get('payment_entry'))
         return {'ok': True, **result}
     except Exception:
-        event.db_set('processing_status', 'Failed')
-        event.db_set('error_message', frappe.get_traceback())
+        traceback = frappe.get_traceback()
+        frappe.db.rollback()
+        frappe.db.set_value(
+            'Payment Provider Event',
+            event.name,
+            {'processing_status': 'Failed', 'error_message': traceback},
+            update_modified=False,
+        )
         frappe.db.commit()
         raise
 
@@ -95,9 +108,20 @@ def payment_orchestrator():
 @frappe.whitelist(allow_guest=True)
 def pinelabs():
     payload = frappe.request.get_data(as_text=True) or ''
+    if not _validate_payload_size(payload):
+        return {'ok': False, 'message': 'Webhook payload is too large'}
     data = _parse_pinelabs_payload(payload)
     settings = get_settings()
     is_browser_callback = _is_browser_callback_request()
+    if not is_pinelabs_postback_enabled(settings=settings):
+        result = {'ok': True, 'ignored': True, 'reason': 'Pine Labs postback processing disabled'}
+        return _pinelabs_browser_callback_response(result, data, is_browser_callback)
+
+    intent_name = _pinelabs_callback_intent_name(data)
+    if not intent_name:
+        result = {'ok': True, 'ignored': True, 'reason': 'No local Payment Intent found for Pine Labs callback'}
+        return _pinelabs_browser_callback_response(result, data, is_browser_callback)
+
     guard_key = hashlib.sha256((payload or json.dumps(data, sort_keys=True)).encode('utf-8')).hexdigest()
     event_type = data.get('event') or ('pinelabs.payment_link.callback' if _is_pinelabs_payment_link_payload(data) else 'pinelabs.postback')
 
@@ -105,8 +129,8 @@ def pinelabs():
         'doctype': 'Payment Provider Event',
         'provider': 'Pine Labs',
         'received_on': now_ts(),
-        'payload': payload or json.dumps(data, default=str),
-        'verification_status': 'Verified',
+        'payload': (payload or json.dumps(data, default=str)) if get_flag(settings, 'store_full_webhook_payload') else '{}',
+        'verification_status': 'Pending',
         'processing_status': 'Pending',
         'duplicate_guard_key': guard_key,
         'event_type': event_type,
@@ -114,24 +138,11 @@ def pinelabs():
     })
     event.insert(ignore_permissions=True)
 
-    if not is_pinelabs_postback_enabled(settings=settings):
-        event.db_set('processing_status', 'Ignored')
-        event.db_set('error_message', 'Pine Labs postback processing disabled in settings')
-        result = {'ok': True, 'ignored': True}
-        return _pinelabs_browser_callback_response(result, data, is_browser_callback)
-
     if _is_pinelabs_payment_link_payload(data):
         result = _process_pinelabs_payment_link_event(data, event)
         return _pinelabs_browser_callback_response(result, data, is_browser_callback)
 
     ptrid = data.get('PlutusTransactionReferenceID')
-    intent_name = frappe.db.get_value('Payment Intent', {'provider_pos_request_id': ptrid}, 'name')
-    if not intent_name:
-        event.db_set('processing_status', 'Ignored')
-        event.db_set('error_message', f'No Payment Intent found for PTRID {ptrid}')
-        result = {'ok': True, 'ignored': True}
-        return _pinelabs_browser_callback_response(result, data, is_browser_callback)
-
     intent = frappe.get_doc('Payment Intent', intent_name)
     callback_response = {
         'ResponseCode': int(data.get('ResponseCode') or 0),
@@ -177,6 +188,13 @@ def _parse_pinelabs_payload(payload):
     if form:
         return dict(form)
     return dict(parse_qsl((payload or '').replace('\n', '&').replace('\r', '&')))
+
+
+def _validate_payload_size(payload):
+    if len((payload or '').encode('utf-8')) <= MAX_WEBHOOK_PAYLOAD_BYTES:
+        return True
+    frappe.local.response['http_status_code'] = 413
+    return False
 
 
 def _is_browser_callback_request():
@@ -343,6 +361,7 @@ def _verified_pinelabs_pos_response(intent, event, callback_response):
         or callback_response.get('PlutusTransactionReferenceID')
         or intent.provider_pos_request_id
     )
+    event.db_set('verification_status', 'Verified')
     return response
 
 
@@ -364,6 +383,7 @@ def _verified_pinelabs_payment_link_data(intent, event, callback_link_data):
         return None
 
     verified = _normalize_pinelabs_payment_link_event(fetched)
+    event.db_set('verification_status', 'Verified')
     provider_reference = verified.get('merchant_payment_link_reference')
     if intent.provider_link_id and link_id != intent.provider_link_id:
         event.db_set('processing_status', 'Failed')
@@ -435,22 +455,38 @@ def _mark_intent_status(data, event_name):
 
 
 def _mark_refunded(data):
-    payment_id = data.get('payload', {}).get('refund', {}).get('entity', {}).get('payment_id')
-    intent_name = frappe.db.get_value('Payment Intent', {'provider_payment_id': payment_id}, 'name')
-    if not intent_name:
-        return {'ignored': True, 'event': 'refund'}
-    doc = frappe.get_doc('Payment Intent', intent_name)
-    doc.db_set('status', 'Refunded')
-    doc.db_set('payment_status', 'refunded')
-    return {'payment_intent': doc.name, 'status': 'Refunded'}
+    refund = data.get('payload', {}).get('refund', {}).get('entity', {})
+    payment = data.get('payload', {}).get('payment', {}).get('entity', {})
+    payment_id = refund.get('payment_id') or payment.get('id')
+    refund_id = refund.get('id')
+    refund_amount = refund.get('amount')
+
+    if refund_amount is not None:
+        refund_amount = float(refund_amount or 0) / 100
+    else:
+        intent_name = frappe.db.get_value('Payment Intent', {'provider_payment_id': payment_id}, 'name')
+        already_refunded = (
+            frappe.db.get_value('Payment Intent', intent_name, 'amount_refunded') if intent_name else 0
+        ) or 0
+        cumulative_refund = float(payment.get('amount_refunded') or 0) / 100
+        refund_amount = max(cumulative_refund - float(already_refunded), 0)
+        if not refund_id and cumulative_refund:
+            refund_id = f'{payment_id}-refund-{int(round(cumulative_refund * 100))}'
+
+    return process_provider_refund(
+        payment_id=payment_id,
+        refund_id=refund_id,
+        refund_amount=refund_amount,
+        provider_status=data.get('event') or 'refunded',
+    )
 
 
 def _resolve_event_id(data):
     return (
-        data.get('payload', {}).get('payment', {}).get('entity', {}).get('id')
+        data.get('payload', {}).get('refund', {}).get('entity', {}).get('id')
+        or data.get('payload', {}).get('payment', {}).get('entity', {}).get('id')
         or data.get('payload', {}).get('payment_link', {}).get('entity', {}).get('id')
         or data.get('payload', {}).get('qr_code', {}).get('entity', {}).get('id')
-        or data.get('payload', {}).get('refund', {}).get('entity', {}).get('id')
         or data.get('payload', {}).get('payment_request', {}).get('entity', {}).get('id')
         or data.get('payload', {}).get('pos_payment', {}).get('entity', {}).get('id')
     )
@@ -466,7 +502,7 @@ def _resolve_payment_intent(data):
     ]
     for entity in entities:
         notes = entity.get('notes', {}) or {}
-        if notes.get('payment_intent'):
+        if notes.get('payment_intent') and frappe.db.exists('Payment Intent', notes.get('payment_intent')):
             return notes.get('payment_intent')
 
     payment_link_id = data.get('payload', {}).get('payment_link', {}).get('entity', {}).get('id')

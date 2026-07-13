@@ -19,22 +19,45 @@ def get_reference_dashboard(reference_doctype, reference_name):
     ensure_reference_read_permission(reference_doctype, reference_name)
     summary = update_reference_payment_summary(reference_doctype, reference_name)
     query_args = {
-        'fields': ['name', 'status', 'gateway', 'payment_mode', 'request_type', 'amount_requested', 'amount_paid', 'amount_allocated', 'amount_unallocated', 'currency', 'payment_link_url', 'qr_code_url', 'provider_payment_id', 'modified'],
+        'fields': ['name', 'status', 'payment_status', 'allocation_status', 'gateway', 'payment_mode', 'request_type', 'amount_requested', 'amount_paid', 'amount_refunded', 'amount_allocated', 'amount_unallocated', 'currency', 'refund_status', 'payment_link_url', 'qr_code_url', 'provider_payment_id', 'modified'],
         'order_by': 'modified desc',
         'limit': 20,
     }
-    if reference_doctype == 'Sales Invoice':
-        query_args['or_filters'] = [
-            {'reference_doctype': reference_doctype, 'reference_name': reference_name},
-            {'sales_invoice': reference_name},
-        ]
-    else:
-        query_args['filters'] = {'reference_doctype': reference_doctype, 'reference_name': reference_name}
-    intents = frappe.get_all('Payment Intent', **query_args)
+    intents = _get_reference_intents(reference_doctype, reference_name, query_args)
     return {
         'summary': with_currency(summary, intents),
         'intents': intents,
     }
+
+
+def _get_reference_intents(reference_doctype, reference_name, query_args):
+    if reference_doctype != 'Sales Invoice':
+        return frappe.get_all(
+            'Payment Intent',
+            filters={'reference_doctype': reference_doctype, 'reference_name': reference_name},
+            **query_args,
+        )
+
+    direct_intents = frappe.get_all(
+        'Payment Intent',
+        filters={'reference_doctype': reference_doctype, 'reference_name': reference_name},
+        **query_args,
+    )
+    linked_intents = frappe.get_all(
+        'Payment Intent',
+        filters={'sales_invoice': reference_name},
+        **query_args,
+    )
+    intents_by_name = {
+        intent.get('name'): intent
+        for intent in [*direct_intents, *linked_intents]
+        if intent.get('name')
+    }
+    return sorted(
+        intents_by_name.values(),
+        key=lambda intent: intent.get('modified') or '',
+        reverse=True,
+    )[: query_args.get('limit', 20)]
 
 
 def empty_summary():

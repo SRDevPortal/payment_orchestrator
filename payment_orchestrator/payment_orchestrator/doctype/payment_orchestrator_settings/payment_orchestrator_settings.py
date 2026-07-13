@@ -65,6 +65,7 @@ class PaymentOrchestratorSettings(Document):
 		self.payment_link_expiry_hours = max(int(self.payment_link_expiry_hours or 72), 1)
 		self.set_default_payment_action_access()
 		self.validate_payment_action_access()
+		self.validate_encounter_status_after_payment()
 		self.reset_inactive_gateway_fields()
 
 		if self.provider_enabled and self.enable_razorpay and not self.has_razorpay_credentials_for_active_modes():
@@ -222,6 +223,19 @@ class PaymentOrchestratorSettings(Document):
 			if value in seen:
 				frappe.throw(f"Duplicate value {value} in {label}")
 			seen.add(value)
+
+	def validate_encounter_status_after_payment(self):
+		status = (self.encounter_status_after_payment or "").strip()
+		if not status:
+			return
+		if not frappe.db.exists("DocType", "SR Encounter Status"):
+			frappe.throw("SR Encounter Status is required to configure an encounter status after payment")
+		if not frappe.db.exists("SR Encounter Status", status):
+			frappe.throw(f"SR Encounter Status {status} does not exist")
+		if frappe.get_meta("SR Encounter Status").has_field("is_active"):
+			is_active = frappe.db.get_value("SR Encounter Status", status, "is_active")
+			if not cint(is_active):
+				frappe.throw(f"SR Encounter Status {status} is inactive")
 
 
 

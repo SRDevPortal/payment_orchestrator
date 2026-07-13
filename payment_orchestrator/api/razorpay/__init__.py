@@ -158,12 +158,22 @@ def refund_payment(payment_intent, amount=None, notes=None):
         frappe.throw("Refunds through this endpoint are available only for Razorpay payments")
     if not intent.provider_payment_id:
         frappe.throw("Payment has not been captured for this intent yet")
+    if getattr(intent, "refund_status", None) == "Refund Initiated":
+        frappe.throw("A refund is already in progress for this payment")
+    refundable_amount = max(flt(intent.amount_paid or 0) - flt(getattr(intent, "amount_refunded", 0) or 0), 0)
+    if refundable_amount <= 0:
+        frappe.throw("This payment has already been fully refunded")
+    refund_amount = flt(amount) if amount is not None else refundable_amount
+    if refund_amount <= 0:
+        frappe.throw("Refund amount must be greater than zero")
+    if refund_amount > refundable_amount:
+        frappe.throw("Refund amount cannot be greater than the remaining refundable amount")
     payload = {}
-    if amount:
-        payload["amount"] = int(round(flt(amount) * 100))
+    payload["amount"] = int(round(refund_amount * 100))
     if notes:
         payload["notes"] = {"reason": notes}
     client = RazorpayClient(settings=settings, mode=intent.provider_mode or "Test")
     response = client.create_refund(intent.provider_payment_id, payload)
     intent.db_set("payment_status", "refund_initiated")
+    intent.db_set("refund_status", "Refund Initiated")
     return response

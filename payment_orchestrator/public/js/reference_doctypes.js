@@ -279,22 +279,161 @@ payment_orchestrator.render_dashboard_intent = function(row) {
     const payment_link_url = payment_orchestrator.safe_external_url(row.payment_link_url);
     const qr_code_url = payment_orchestrator.safe_external_url(row.qr_code_url);
     const currency = row.currency;
+    const lifecycle = payment_orchestrator.dashboard_intent_lifecycle_label(row);
+    const guidance = payment_orchestrator.dashboard_intent_guidance(row);
+    const intent_url = `/app/payment-intent/${encodeURIComponent(row.name || '')}`;
+    const refunded = parseFloat(row.amount_refunded || 0);
     return `
         <div style="padding:8px 0;border-bottom:1px solid #eee;">
-            <div><b>${payment_orchestrator.escape_html(row.name)}</b> - ${payment_orchestrator.escape_html(row.status)}</div>
-            <div style="font-size:12px;color:#666;">
-                ${payment_orchestrator.escape_html(row.gateway || '')}
-                ${payment_orchestrator.escape_html(row.payment_mode || '')}
-                | ${payment_orchestrator.escape_html(row.request_type || '')}
-                | Requested: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_requested, currency))}
-                | Received: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_paid, currency))}
-                | Allocated: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_allocated, currency))}
-                | Unallocated: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_unallocated, currency))}
+            <div>
+                <b>${__('Payment Intent')}:</b>
+                <a href="${intent_url}">${payment_orchestrator.escape_html(row.name)}</a>
             </div>
-            ${payment_link_url ? `<div style="font-size:12px;"><a href="${payment_orchestrator.escape_html(payment_link_url)}" target="_blank" rel="noopener noreferrer">Open Payment Link</a></div>` : ''}
-            ${qr_code_url ? `<div style="font-size:12px;"><a href="${payment_orchestrator.escape_html(qr_code_url)}" target="_blank" rel="noopener noreferrer">Open QR Code</a></div>` : ''}
+            <div style="font-size:12px;color:#666;margin-top:2px;">
+                ${payment_orchestrator.escape_html(lifecycle)}
+            </div>
+            <div style="font-size:12px;margin-top:4px;">
+                <b>${__('Summary')}:</b> ${payment_orchestrator.escape_html(guidance.summary)}
+            </div>
+            <div style="font-size:12px;color:#666;margin-top:2px;">
+                <b>${__('Next action')}:</b> ${payment_orchestrator.escape_html(guidance.next_action)}
+            </div>
+            <div style="font-size:12px;color:#666;margin-top:4px;display:flex;gap:4px 8px;flex-wrap:wrap;">
+                <span>${payment_orchestrator.escape_html(row.gateway || '')}</span>
+                <span>&middot;</span>
+                <span>${payment_orchestrator.escape_html(row.payment_mode || '')}</span>
+                ${row.request_type ? `<span>&middot;</span><span>${payment_orchestrator.escape_html(row.request_type)}</span>` : ''}
+            </div>
+            <div style="font-size:12px;color:#666;margin-top:2px;display:flex;gap:4px 12px;flex-wrap:wrap;">
+                <span>${__('Requested')}: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_requested, currency))}</span>
+                <span>${__('Received')}: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_paid, currency))}</span>
+                ${refunded > 0 ? `<span>${__('Refunded')}: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_refunded, currency))}</span>` : ''}
+                <span>${__('Allocated')}: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_allocated, currency))}</span>
+                <span>${__('Unallocated')}: ${payment_orchestrator.escape_html(payment_orchestrator.format_currency(row.amount_unallocated, currency))}</span>
+            </div>
+            ${(payment_link_url || qr_code_url) ? `<div style="font-size:12px;margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;">
+                ${payment_link_url ? `<a href="${payment_orchestrator.escape_html(payment_link_url)}" target="_blank" rel="noopener noreferrer">${__('Open Payment Link')}</a>` : ''}
+                ${qr_code_url ? `<a href="${payment_orchestrator.escape_html(qr_code_url)}" target="_blank" rel="noopener noreferrer">${__('Open QR Code')}</a>` : ''}
+            </div>` : ''}
         </div>
     `;
+};
+
+payment_orchestrator.dashboard_intent_lifecycle_label = function(row) {
+    const paid = parseFloat(row.amount_paid || 0);
+    const refunded = parseFloat(row.amount_refunded || 0);
+    const allocated = parseFloat(row.amount_allocated || 0);
+    const unallocated = parseFloat(row.amount_unallocated || 0);
+    const provider_status = String(row.payment_status || row.status || '').toLowerCase();
+    const gateway_failed = ['failed', 'error', 'declined', 'rejected'].some(
+        (value) => provider_status.includes(value)
+    );
+    let gateway = __('Gateway Pending');
+    if (gateway_failed) {
+        gateway = __('Gateway Failed');
+    } else if (provider_status.includes('expired')) {
+        gateway = __('Gateway Expired');
+    } else if (provider_status.includes('cancel')) {
+        gateway = __('Gateway Cancelled');
+    } else if (paid > 0 || row.provider_payment_id) {
+        gateway = __('Gateway Processed');
+    }
+
+    let received = __('Awaiting Payment');
+    if (paid > 0 && refunded >= paid) {
+        received = __('Fully Refunded');
+    } else if (refunded > 0) {
+        received = __('Partially Refunded');
+    } else if (paid > 0) {
+        received = __('Payment Received');
+    } else if (gateway_failed) {
+        received = __('Not Received');
+    }
+
+    let allocation = __('Allocation Pending');
+    const allocation_status = String(row.allocation_status || '').toLowerCase();
+    if (paid > 0 && refunded >= paid) {
+        allocation = __('Allocation Reversed');
+    } else if (allocation_status.includes('fully') || (allocated > 0 && unallocated <= 0)) {
+        allocation = __('Fully Allocated');
+    } else if (allocation_status.includes('partial') || allocated > 0) {
+        allocation = __('Partially Allocated');
+    } else if (paid > 0) {
+        allocation = __('Not Allocated');
+    }
+    return [gateway, received, allocation].join(' → ');
+};
+
+payment_orchestrator.dashboard_intent_guidance = function(row) {
+    const requested = parseFloat(row.amount_requested || 0);
+    const paid = parseFloat(row.amount_paid || 0);
+    const refunded = parseFloat(row.amount_refunded || 0);
+    const allocated = parseFloat(row.amount_allocated || 0);
+    const unallocated = parseFloat(row.amount_unallocated || 0);
+    const provider_status = String(row.payment_status || row.status || '').toLowerCase();
+    const allocation_status = String(row.allocation_status || '').toLowerCase();
+    const gateway_failed = ['failed', 'error', 'declined', 'rejected'].some(
+        (value) => provider_status.includes(value)
+    );
+    const fully_refunded = paid > 0 && refunded >= paid;
+    const fully_allocated = allocation_status.includes('fully') || (allocated > 0 && unallocated <= 0);
+
+    if (fully_refunded) {
+        return {
+            summary: __('Payment was fully refunded.'),
+            next_action: __('No payment action is required. Review the refund if reconciliation is needed.'),
+        };
+    }
+    if (refunded > 0) {
+        return {
+            summary: __('Payment was partially refunded.'),
+            next_action: __('Review the remaining received and allocated amounts.'),
+        };
+    }
+    if (gateway_failed && paid <= 0) {
+        return {
+            summary: __('The gateway did not complete this payment.'),
+            next_action: __('Retry the payment or create a new payment request.'),
+        };
+    }
+    if ((provider_status.includes('expired') || provider_status.includes('cancel')) && paid <= 0) {
+        return {
+            summary: provider_status.includes('expired')
+                ? __('The payment request expired without payment.')
+                : __('The payment request was cancelled without payment.'),
+            next_action: __('Create a new payment request if payment is still required.'),
+        };
+    }
+    if (paid > 0 && requested > paid) {
+        const remaining = Math.max(requested - paid, 0);
+        const remaining_label = payment_orchestrator.format_currency(remaining, row.currency);
+        return {
+            summary: __('A partial payment has been received.'),
+            next_action: __('Collect the remaining amount: {0}', [remaining_label]),
+        };
+    }
+    if (paid > 0 && fully_allocated) {
+        return {
+            summary: __('Payment completed and fully allocated.'),
+            next_action: __('No further action is required.'),
+        };
+    }
+    if (paid > 0 && allocated > 0) {
+        return {
+            summary: __('Payment was received and partially allocated.'),
+            next_action: __('Allocate the remaining received amount.'),
+        };
+    }
+    if (paid > 0) {
+        return {
+            summary: __('Payment was received but has not been allocated.'),
+            next_action: __('Allocate the payment to the appropriate invoice.'),
+        };
+    }
+    return {
+        summary: __('The payment request is awaiting customer payment.'),
+        next_action: __('Wait for payment or send the payment link again.'),
+    };
 };
 
 payment_orchestrator.payment_result_button = function(label, action, value, extra_attrs) {
@@ -769,15 +908,15 @@ payment_orchestrator.render_dashboard = function(frm) {
             const html = `
                 <div class="po-dashboard card" style="padding:12px;margin-top:12px;">
                     <div style="display:flex;gap:24px;flex-wrap:wrap;">
-                        <div><div style="font-size:11px;color:#777;">Requested Amount</div><div style="font-size:18px;font-weight:600;">${payment_orchestrator.escape_html(payment_orchestrator.format_currency(summary.total_requested, currency))}</div></div>
-                        <div><div style="font-size:11px;color:#777;">Received Amount</div><div style="font-size:18px;font-weight:600;">${payment_orchestrator.escape_html(payment_orchestrator.format_currency(summary.total_paid, currency))}</div></div>
-                        <div><div style="font-size:11px;color:#777;">Allocated Amount</div><div style="font-size:18px;font-weight:600;">${payment_orchestrator.escape_html(payment_orchestrator.format_currency(summary.total_allocated, currency))}</div></div>
-                        <div><div style="font-size:11px;color:#777;">Unallocated Amount</div><div style="font-size:18px;font-weight:600;">${payment_orchestrator.escape_html(payment_orchestrator.format_currency(summary.total_unallocated, currency))}</div></div>
+                        <div><div style="font-size:11px;color:#777;">${__('Total Requested')}</div><div style="font-size:18px;font-weight:600;">${payment_orchestrator.escape_html(payment_orchestrator.format_currency(summary.total_requested, currency))}</div></div>
+                        <div><div style="font-size:11px;color:#777;">${__('Total Received')}</div><div style="font-size:18px;font-weight:600;">${payment_orchestrator.escape_html(payment_orchestrator.format_currency(summary.total_paid, currency))}</div></div>
+                        <div><div style="font-size:11px;color:#777;">${__('Total Allocated')}</div><div style="font-size:18px;font-weight:600;">${payment_orchestrator.escape_html(payment_orchestrator.format_currency(summary.total_allocated, currency))}</div></div>
+                        <div><div style="font-size:11px;color:#777;">${__('Remaining Unallocated')}</div><div style="font-size:18px;font-weight:600;">${payment_orchestrator.escape_html(payment_orchestrator.format_currency(summary.total_unallocated, currency))}</div></div>
                     </div>
                     <hr>
-                    <div><b>Recent Payment Intents</b></div>
+                    <div><b>${__('Payment History')}</b></div>
                     <div style="margin-top:8px;max-height:220px;overflow:auto;">
-                        ${intents.length ? intents.map(payment_orchestrator.render_dashboard_intent).join('') : '<div style="color:#666;">No payment intents yet.</div>'}
+                        ${intents.length ? intents.map(payment_orchestrator.render_dashboard_intent).join('') : `<div style="color:#666;">${__('No payment requests yet.')}</div>`}
                     </div>
                 </div>
             `;

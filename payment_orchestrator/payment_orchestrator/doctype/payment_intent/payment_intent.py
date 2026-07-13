@@ -6,6 +6,7 @@ FINAL_STATUSES = {
     "Paid",
     "Partially Allocated",
     "Allocated",
+    "Partially Refunded",
     "Refunded",
     "Cancelled",
     "Expired",

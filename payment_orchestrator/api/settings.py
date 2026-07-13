@@ -23,6 +23,7 @@ def get_settings_context():
         'default_request_channel': doc.default_request_channel,
         'enable_on_crm_lead': get_flag(doc, 'enable_on_crm_lead', 1),
         'enable_on_patient_encounter': get_flag(doc, 'enable_on_patient_encounter', 1),
+        'encounter_status_after_payment': getattr(doc, 'encounter_status_after_payment', None),
         'enable_on_sales_order': get_flag(doc, 'enable_on_sales_order', 1),
         'enable_on_sales_invoice': get_flag(doc, 'enable_on_sales_invoice', 1),
         'enable_auto_allocation': get_flag(doc, 'enable_auto_allocation', 1),
