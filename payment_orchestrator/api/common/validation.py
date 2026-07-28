@@ -4,6 +4,7 @@ from frappe.utils import flt
 from payment_orchestrator.utils import get_settings
 
 DEFAULT_PAYMENT_ACTION_ROLES = {"Accounts Manager", "Accounts User", "System Manager"}
+PAYMENT_ELIGIBLE_PATIENT_ENCOUNTER_TYPES = {"Order", "Appointment"}
 
 
 def allow_partial(settings, reference_doctype):
@@ -94,9 +95,11 @@ def validate_patient_encounter_request(doc):
     if int(getattr(doc, "docstatus", 0) or 0) != 0:
         frappe.throw("Payment request can be generated only for a draft Patient Encounter")
 
-    encounter_type = getattr(doc, "sr_encounter_type", None)
-    if encounter_type and encounter_type != "Order":
-        frappe.throw("Payment request can be generated only for Order Patient Encounters")
+    encounter_type = str(getattr(doc, "sr_encounter_type", None) or "").strip()
+    if encounter_type not in PAYMENT_ELIGIBLE_PATIENT_ENCOUNTER_TYPES:
+        frappe.throw(
+            "Payment request can be generated only for Order or Appointment Patient Encounters"
+        )
 
 
 def validate_sales_invoice_request(doc, amount, settings=None):

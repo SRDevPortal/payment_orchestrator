@@ -25,13 +25,22 @@ payment_orchestrator.is_saved_doc = function(frm) {
     return Boolean(frm.doc && frm.doc.name && !is_new);
 };
 
+payment_orchestrator.patient_encounter_payment_types = ['Order', 'Appointment'];
+
+payment_orchestrator.is_supported_patient_encounter_type = function(frm) {
+    return payment_orchestrator.patient_encounter_payment_types.includes(
+        String(frm.doc.sr_encounter_type || '').trim()
+    );
+};
+
 payment_orchestrator.can_show_payment_actions = function(frm, settings) {
     if (!payment_orchestrator.is_saved_doc(frm)) return false;
     if (!settings.show_action_buttons || !payment_orchestrator.is_doctype_enabled(frm, settings)) return false;
     if (!settings.can_perform_payment_actions) return false;
 
     if (frm.doctype === 'Patient Encounter') {
-        return frm.doc.sr_encounter_type === 'Order' && Number(frm.doc.docstatus || 0) === 0;
+        return payment_orchestrator.is_supported_patient_encounter_type(frm)
+            && Number(frm.doc.docstatus || 0) === 0;
     }
 
     if (frm.doctype === 'Sales Invoice') {
@@ -47,7 +56,7 @@ payment_orchestrator.can_show_payment_actions = function(frm, settings) {
 
 payment_orchestrator.is_patient_encounter_collectible = function(frm) {
     return frm.doctype === 'Patient Encounter'
-        && frm.doc.sr_encounter_type === 'Order'
+        && payment_orchestrator.is_supported_patient_encounter_type(frm)
         && Number(frm.doc.docstatus || 0) === 0;
 };
 

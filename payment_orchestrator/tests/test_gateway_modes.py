@@ -11,6 +11,7 @@ from payment_orchestrator.api.common.validation import (
     has_payment_action_permission,
     payment_action_role_profiles,
     payment_action_roles,
+    validate_patient_encounter_request,
 )
 from payment_orchestrator.api.pinelabs import pinelabs_amount, resolve_pos_request_type
 from payment_orchestrator.api.razorpay import refund_payment
@@ -55,6 +56,39 @@ from payment_orchestrator.utils import (
     is_pinelabs_pos_enabled,
     is_razorpay_payment_link_enabled,
 )
+
+
+class PatientEncounterPaymentValidationTests(TestCase):
+    @staticmethod
+    def _doc(encounter_type, docstatus=0):
+        return SimpleNamespace(
+            sr_encounter_type=encounter_type,
+            docstatus=docstatus,
+        )
+
+    def test_draft_order_encounter_is_allowed(self):
+        validate_patient_encounter_request(self._doc("Order"))
+
+    def test_draft_appointment_encounter_is_allowed(self):
+        validate_patient_encounter_request(self._doc("Appointment"))
+
+    def test_unsupported_encounter_type_is_rejected(self):
+        with self.assertRaisesRegex(
+            Exception,
+            "only for Order or Appointment Patient Encounters",
+        ):
+            validate_patient_encounter_request(self._doc("Followup"))
+
+    def test_missing_encounter_type_is_rejected(self):
+        with self.assertRaisesRegex(
+            Exception,
+            "only for Order or Appointment Patient Encounters",
+        ):
+            validate_patient_encounter_request(self._doc(None))
+
+    def test_submitted_supported_encounter_is_rejected(self):
+        with self.assertRaisesRegex(Exception, "only for a draft Patient Encounter"):
+            validate_patient_encounter_request(self._doc("Appointment", docstatus=1))
 
 
 class ResetInactiveGatewayFieldsTests(TestCase):
