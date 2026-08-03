@@ -113,7 +113,8 @@ payment_orchestrator.can_show_pinelabs_pos_demo_action = function(frm, settings)
 payment_orchestrator.can_show_payment_dashboard = function(frm, settings) {
     return payment_orchestrator.is_saved_doc(frm)
         && settings.show_payment_summary_on_reference_doctypes
-        && payment_orchestrator.is_doctype_enabled(frm, settings);
+        && payment_orchestrator.is_doctype_enabled(frm, settings)
+        && payment_orchestrator.has_payment_summary_history(frm);
 };
 
 payment_orchestrator.has_payment_summary_history = function(frm) {
@@ -148,16 +149,21 @@ payment_orchestrator.payment_summary_fields = [
 payment_orchestrator.toggle_payment_summary_fields = function(frm, settings) {
     const visible = payment_orchestrator.is_saved_doc(frm)
         && payment_orchestrator.is_doctype_enabled(frm, settings)
-        && Boolean(settings.show_payment_summary_on_reference_doctypes);
+        && Boolean(settings.show_payment_summary_on_reference_doctypes)
+        && payment_orchestrator.has_payment_summary_history(frm);
+    payment_orchestrator.set_payment_summary_fields_visible(frm, visible);
+
+    if (!visible) {
+        payment_orchestrator.clear_payment_summary_display(frm);
+    }
+};
+
+payment_orchestrator.set_payment_summary_fields_visible = function(frm, visible) {
     payment_orchestrator.payment_summary_fields.forEach((fieldname) => {
         if (frm.fields_dict[fieldname]) {
             frm.toggle_display(fieldname, visible);
         }
     });
-
-    if (!visible) {
-        payment_orchestrator.clear_payment_summary_display(frm);
-    }
 };
 
 payment_orchestrator.clear_payment_summary_display = function(frm) {
@@ -912,6 +918,11 @@ payment_orchestrator.render_dashboard = function(frm) {
         },
         callback(r) {
             const data = r.message || {};
+            if (data.has_history === false) {
+                payment_orchestrator.set_payment_summary_fields_visible(frm, false);
+                payment_orchestrator.clear_payment_summary_display(frm);
+                return;
+            }
             const summary = data.summary || {};
             const intents = data.intents || [];
             const currency = summary.currency;

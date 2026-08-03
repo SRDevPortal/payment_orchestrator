@@ -15,7 +15,7 @@ from payment_orchestrator.api.common.validation import (
 )
 from payment_orchestrator.api.pinelabs import pinelabs_amount, resolve_pos_request_type
 from payment_orchestrator.api.razorpay import refund_payment
-from payment_orchestrator.api.dashboard import _get_reference_intents
+from payment_orchestrator.api.dashboard import _get_reference_dashboard, _get_reference_intents
 from payment_orchestrator.logic import (
     _extract_payment_entity,
     _resolve_paid_to_account,
@@ -487,6 +487,62 @@ class WebhookIngressTests(TestCase):
 
 
 class ReferenceDashboardTests(TestCase):
+    def test_no_payment_intents_returns_no_history_without_summary_write(self):
+        fake_frappe = SimpleNamespace(
+            db=SimpleNamespace(exists=lambda *args: True),
+        )
+
+        with patch("payment_orchestrator.api.dashboard.frappe", fake_frappe), patch(
+            "payment_orchestrator.api.dashboard.is_doctype_enabled", return_value=True
+        ), patch(
+            "payment_orchestrator.api.dashboard.ensure_reference_read_permission"
+        ), patch(
+            "payment_orchestrator.api.dashboard._get_reference_intents", return_value=[]
+        ), patch(
+            "payment_orchestrator.api.dashboard.update_reference_payment_summary"
+        ) as update_summary, patch(
+            "payment_orchestrator.api.dashboard.get_settings",
+            return_value=SimpleNamespace(default_currency="INR"),
+        ):
+            result = _get_reference_dashboard("Patient Encounter", "HLC-ENC-NO-PAYMENT")
+
+        self.assertFalse(result["has_history"])
+        self.assertEqual(result["intents"], [])
+        self.assertEqual(result["summary"]["total_paid"], 0)
+        update_summary.assert_not_called()
+
+    def test_payment_intent_returns_history_and_refreshes_summary(self):
+        fake_frappe = SimpleNamespace(
+            db=SimpleNamespace(exists=lambda *args: True),
+        )
+        intents = [{"name": "PI-0001", "currency": "INR"}]
+        summary = {
+            "total_requested": 100,
+            "total_paid": 100,
+            "total_allocated": 0,
+            "total_unallocated": 100,
+        }
+
+        with patch("payment_orchestrator.api.dashboard.frappe", fake_frappe), patch(
+            "payment_orchestrator.api.dashboard.is_doctype_enabled", return_value=True
+        ), patch(
+            "payment_orchestrator.api.dashboard.ensure_reference_read_permission"
+        ), patch(
+            "payment_orchestrator.api.dashboard._get_reference_intents", return_value=intents
+        ), patch(
+            "payment_orchestrator.api.dashboard.update_reference_payment_summary",
+            return_value=summary,
+        ) as update_summary, patch(
+            "payment_orchestrator.api.dashboard.get_settings",
+            return_value=SimpleNamespace(default_currency="INR"),
+        ):
+            result = _get_reference_dashboard("Patient Encounter", "HLC-ENC-PAID")
+
+        self.assertTrue(result["has_history"])
+        self.assertEqual(result["intents"], intents)
+        self.assertEqual(result["summary"]["total_paid"], 100)
+        update_summary.assert_called_once_with("Patient Encounter", "HLC-ENC-PAID")
+
     def test_sales_invoice_uses_scoped_filters_and_deduplicates_intents(self):
         direct = {
             "name": "PI-DIRECT",

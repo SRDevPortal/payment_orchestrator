@@ -7,24 +7,37 @@ from payment_orchestrator.utils import get_settings, is_doctype_enabled
 
 @frappe.whitelist()
 def get_reference_dashboard(reference_doctype, reference_name):
+    return _get_reference_dashboard(reference_doctype, reference_name)
+
+
+def _get_reference_dashboard(reference_doctype, reference_name):
     if not is_doctype_enabled(reference_doctype):
         frappe.throw(f'Payment Orchestrator is disabled for {reference_doctype}')
 
     if not reference_name or str(reference_name).startswith("new-") or not frappe.db.exists(reference_doctype, reference_name):
         return {
+            'has_history': False,
             'summary': empty_summary(),
             'intents': [],
         }
 
     ensure_reference_read_permission(reference_doctype, reference_name)
-    summary = update_reference_payment_summary(reference_doctype, reference_name)
     query_args = {
         'fields': ['name', 'status', 'payment_status', 'allocation_status', 'gateway', 'payment_mode', 'request_type', 'amount_requested', 'amount_paid', 'amount_refunded', 'amount_allocated', 'amount_unallocated', 'currency', 'refund_status', 'payment_link_url', 'qr_code_url', 'provider_payment_id', 'modified'],
         'order_by': 'modified desc',
         'limit': 20,
     }
     intents = _get_reference_intents(reference_doctype, reference_name, query_args)
+    if not intents:
+        return {
+            'has_history': False,
+            'summary': empty_summary(),
+            'intents': [],
+        }
+
+    summary = update_reference_payment_summary(reference_doctype, reference_name)
     return {
+        'has_history': True,
         'summary': with_currency(summary, intents),
         'intents': intents,
     }

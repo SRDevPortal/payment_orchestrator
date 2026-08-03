@@ -2,9 +2,9 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
-from payment_orchestrator.patches import add_reference_payment_status
+from payment_orchestrator.patches import add_reference_payment_status, hide_empty_payment_summary
 from payment_orchestrator.services import derive_reference_payment_status
-from payment_orchestrator.setup.install import REFERENCE_SUMMARY_FIELDS
+from payment_orchestrator.setup.install import PAYMENT_SUMMARY_DEPENDS_ON, REFERENCE_SUMMARY_FIELDS
 
 
 class ReferencePaymentStatusTests(TestCase):
@@ -86,6 +86,52 @@ class ReferencePaymentStatusFieldTests(TestCase):
                 self.assertEqual(status_field.get('in_list_view'), 1)
                 self.assertEqual(status_field.get('in_standard_filter'), 0)
                 self.assertEqual(status_field.get('search_index'), 0)
+
+    def test_payment_summary_tab_depends_on_payment_history_for_every_reference_doctype(self):
+        for doctype, fields in REFERENCE_SUMMARY_FIELDS.items():
+            payment_tab = next(
+                (field for field in fields if field.get('fieldname') == 'po_payment_tab'),
+                None,
+            )
+            with self.subTest(doctype=doctype):
+                self.assertIsNotNone(payment_tab)
+                self.assertEqual(payment_tab.get('depends_on'), PAYMENT_SUMMARY_DEPENDS_ON)
+
+
+class EmptyPaymentSummaryPatchTests(TestCase):
+    def test_patch_only_updates_custom_field_metadata_and_payment_intent_indexes(self):
+        fake_frappe = MagicMock()
+        fake_frappe.db.exists.return_value = True
+        fake_frappe.db.has_column.return_value = True
+
+        with (
+            patch.object(hide_empty_payment_summary, 'frappe', fake_frappe),
+            patch.object(
+                hide_empty_payment_summary,
+                'REFERENCE_SUMMARY_FIELDS',
+                {'Patient Encounter': []},
+            ),
+        ):
+            hide_empty_payment_summary.execute()
+
+        fake_frappe.db.set_value.assert_called_once_with(
+            'Custom Field',
+            'Patient Encounter-po_payment_tab',
+            'depends_on',
+            PAYMENT_SUMMARY_DEPENDS_ON,
+            update_modified=False,
+        )
+        fake_frappe.db.add_index.assert_any_call(
+            'Payment Intent',
+            ['reference_doctype', 'reference_name'],
+            index_name='payment_intent_reference_index',
+        )
+        fake_frappe.db.add_index.assert_any_call(
+            'Payment Intent',
+            ['sales_invoice'],
+            index_name='payment_intent_sales_invoice_index',
+        )
+        self.assertEqual(fake_frappe.db.add_index.call_count, 2)
 
 
 class ReferencePaymentStatusBackfillTests(TestCase):

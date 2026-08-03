@@ -10,6 +10,13 @@ from payment_orchestrator.utils import ensure_required_modes_of_payment
 LINKED_REFERENCE_DOCTYPE = "Payment Intent"
 SALES_INVOICE_PAYMENT_SUMMARY_ANCHOR = "si_support_actions_html"
 PATIENT_ENCOUNTER_PAYMENT_SUMMARY_ANCHOR = "enc_multi_payments"
+PAYMENT_SUMMARY_DEPENDS_ON = (
+    "eval:doc.po_last_payment_intent"
+    " || (doc.po_total_requested || 0) > 0"
+    " || (doc.po_total_paid || 0) > 0"
+    " || (doc.po_total_allocated || 0) > 0"
+    " || (doc.po_total_unallocated || 0) > 0"
+)
 PAYMENT_STATUS_OPTIONS = "\n".join([
     "Not Requested",
     "Awaiting Payment",
@@ -42,7 +49,7 @@ def _payment_status_field():
 
 REFERENCE_SUMMARY_FIELDS = {
     'CRM Lead': [
-        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': 'lead_name'},
+        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': 'lead_name', 'depends_on': PAYMENT_SUMMARY_DEPENDS_ON},
         {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
@@ -52,7 +59,7 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
     'Patient Encounter': [
-        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': PATIENT_ENCOUNTER_PAYMENT_SUMMARY_ANCHOR},
+        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': PATIENT_ENCOUNTER_PAYMENT_SUMMARY_ANCHOR, 'depends_on': PAYMENT_SUMMARY_DEPENDS_ON},
         {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
@@ -62,7 +69,7 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
     'Sales Order': [
-        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': 'payment_schedule'},
+        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': 'payment_schedule', 'depends_on': PAYMENT_SUMMARY_DEPENDS_ON},
         {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
@@ -72,7 +79,7 @@ REFERENCE_SUMMARY_FIELDS = {
         {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
     'Sales Invoice': [
-        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': SALES_INVOICE_PAYMENT_SUMMARY_ANCHOR},
+        {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': SALES_INVOICE_PAYMENT_SUMMARY_ANCHOR, 'depends_on': PAYMENT_SUMMARY_DEPENDS_ON},
         {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
         {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
         {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
