@@ -1,5 +1,5 @@
 import frappe
-from frappe.utils import add_to_date, cint
+from frappe.utils import add_to_date, cint, flt
 
 from payment_orchestrator.utils import (
     get_settings,
@@ -37,6 +37,8 @@ DOCTYPE_FIELD_MAP = {
         'mobile_fields': ['contact_mobile'],
     },
 }
+
+PAYMENT_STATUS_EPSILON = 0.000001
 
 
 def build_reference_context(reference_doctype: str, reference_name: str) -> dict:
@@ -179,6 +181,58 @@ def get_allocation_targets(intent) -> list[dict]:
     return targets
 
 
+def derive_reference_payment_status(summary, latest_intent=None) -> str:
+    """Return one list-friendly status for the full payment and allocation lifecycle."""
+    total_paid = flt(_summary_value(summary, 'total_paid'))
+    total_refunded = flt(_summary_value(summary, 'total_refunded'))
+    total_allocated = flt(_summary_value(summary, 'total_allocated'))
+    total_unallocated = flt(_summary_value(summary, 'total_unallocated'))
+
+    if total_refunded > PAYMENT_STATUS_EPSILON:
+        if total_paid <= PAYMENT_STATUS_EPSILON:
+            return 'Refunded'
+        return 'Partially Refunded'
+
+    if total_paid > PAYMENT_STATUS_EPSILON and total_allocated > PAYMENT_STATUS_EPSILON:
+        if total_unallocated <= PAYMENT_STATUS_EPSILON:
+            return 'Allocated'
+        return 'Partially Allocated'
+
+    if total_paid > PAYMENT_STATUS_EPSILON:
+        latest_requested = flt(_summary_value(latest_intent, 'amount_requested'))
+        latest_paid = flt(_summary_value(latest_intent, 'amount_paid'))
+        if (
+            latest_requested > PAYMENT_STATUS_EPSILON
+            and latest_paid > PAYMENT_STATUS_EPSILON
+            and latest_paid + PAYMENT_STATUS_EPSILON < latest_requested
+        ):
+            return 'Partially Received'
+        return 'Payment Received'
+
+    if not latest_intent:
+        return 'Not Requested'
+
+    intent_status = str(_summary_value(latest_intent, 'status') or '').strip().lower()
+    provider_status = ' '.join(
+        str(_summary_value(latest_intent, fieldname) or '').strip().lower()
+        for fieldname in (
+            'payment_status',
+            'pos_request_status',
+            'pos_failure_reason',
+            'qr_status',
+        )
+    )
+    combined_status = f'{intent_status} {provider_status}'
+
+    if 'expired' in combined_status or 'closed' in combined_status:
+        return 'Expired'
+    if 'cancel' in combined_status:
+        return 'Cancelled'
+    if any(value in combined_status for value in ('failed', 'error', 'declined', 'rejected', 'invalid')):
+        return 'Payment Failed'
+    return 'Awaiting Payment'
+
+
 def update_reference_payment_summary(reference_doctype: str, reference_name: str) -> dict:
     if not is_doctype_enabled(reference_doctype):
         return {
@@ -192,10 +246,11 @@ def update_reference_payment_summary(reference_doctype: str, reference_name: str
 
     where_clause, values = _payment_intent_reference_where(reference_doctype, reference_name)
 
-    total_requested = frappe.db.sql(
+    summary = frappe.db.sql(
         f"""
         select coalesce(sum(amount_requested), 0) as total_requested,
                coalesce(sum(amount_paid - coalesce(amount_refunded, 0)), 0) as total_paid,
+               coalesce(sum(amount_refunded), 0) as total_refunded,
                coalesce(sum(amount_allocated), 0) as total_allocated,
                coalesce(sum(amount_unallocated), 0) as total_unallocated
         from `tabPayment Intent`
@@ -205,30 +260,36 @@ def update_reference_payment_summary(reference_doctype: str, reference_name: str
         as_dict=True,
     )[0]
 
+    latest_rows = frappe.db.sql(
+        f"""
+        select name, status, payment_status, pos_request_status, pos_failure_reason, qr_status,
+               amount_requested, amount_paid, amount_refunded, amount_allocated,
+               amount_unallocated, allocation_status
+        from `tabPayment Intent`
+        where {where_clause}
+        order by modified desc
+        limit 1
+        """,
+        values,
+        as_dict=True,
+    )
+    latest_intent = latest_rows[0] if latest_rows else None
+    payment_status = derive_reference_payment_status(summary, latest_intent)
+
     meta = frappe.get_meta(reference_doctype)
     updates = {}
     if meta.get_field('po_total_requested'):
-        updates['po_total_requested'] = total_requested.total_requested
+        updates['po_total_requested'] = summary.total_requested
     if meta.get_field('po_total_paid'):
-        updates['po_total_paid'] = total_requested.total_paid
+        updates['po_total_paid'] = summary.total_paid
     if meta.get_field('po_total_allocated'):
-        updates['po_total_allocated'] = total_requested.total_allocated
+        updates['po_total_allocated'] = summary.total_allocated
     if meta.get_field('po_total_unallocated'):
-        updates['po_total_unallocated'] = total_requested.total_unallocated
+        updates['po_total_unallocated'] = summary.total_unallocated
+    if meta.get_field('po_payment_status'):
+        updates['po_payment_status'] = payment_status
     if meta.get_field('po_last_payment_intent'):
-        latest = frappe.db.sql(
-            f"""
-            select name
-            from `tabPayment Intent`
-            where {where_clause}
-            order by modified desc
-            limit 1
-            """,
-            values,
-            as_dict=True,
-        )
-        latest = latest[0].name if latest else None
-        updates['po_last_payment_intent'] = latest
+        updates['po_last_payment_intent'] = latest_intent.name if latest_intent else None
 
     if updates:
         frappe.db.set_value(reference_doctype, reference_name, updates, update_modified=False)
@@ -237,10 +298,12 @@ def update_reference_payment_summary(reference_doctype: str, reference_name: str
         'reference_doctype': reference_doctype,
         'reference_name': reference_name,
         **updates,
-        'total_requested': total_requested.total_requested,
-        'total_paid': total_requested.total_paid,
-        'total_allocated': total_requested.total_allocated,
-        'total_unallocated': total_requested.total_unallocated,
+        'total_requested': summary.total_requested,
+        'total_paid': summary.total_paid,
+        'total_refunded': summary.total_refunded,
+        'total_allocated': summary.total_allocated,
+        'total_unallocated': summary.total_unallocated,
+        'payment_status': payment_status,
     }
 
 
@@ -260,6 +323,14 @@ def _payment_intent_reference_where(reference_doctype: str, reference_name: str)
         "(reference_doctype=%s and reference_name=%s)",
         (reference_doctype, reference_name),
     )
+
+
+def _summary_value(source, fieldname):
+    if not source:
+        return None
+    if isinstance(source, dict):
+        return source.get(fieldname)
+    return getattr(source, fieldname, None)
 
 
 def _first_value(doc, fieldnames):

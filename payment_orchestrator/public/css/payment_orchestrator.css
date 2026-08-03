@@ -277,6 +277,11 @@
     background: #d1fae5;
 }
 
+.po-list-status-info {
+    color: #1e40af;
+    background: #dbeafe;
+}
+
 .po-list-status-danger {
     color: #991b1b;
     background: #fee2e2;
@@ -295,4 +300,13 @@
 .po-list-status-neutral {
     color: #374151;
     background: #f3f4f6;
+}
+
+.po-list-status-refund {
+    color: #6b21a8;
+    background: #f3e8ff;
+}
+
+a.po-list-status-link:hover {
+    text-decoration: none;
 }

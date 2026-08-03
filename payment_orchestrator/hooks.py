@@ -20,6 +20,10 @@ doctype_js = {
 
 doctype_list_js = {
     "Payment Intent": "public/js/payment_intent_list.js",
+    "CRM Lead": "public/js/reference_doctypes_list.js",
+    "Patient Encounter": "public/js/reference_doctypes_list.js",
+    "Sales Order": "public/js/reference_doctypes_list.js",
+    "Sales Invoice": "public/js/reference_doctypes_list.js",
 }
 
 scheduler_events = {

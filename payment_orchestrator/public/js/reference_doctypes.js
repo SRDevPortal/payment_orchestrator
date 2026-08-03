@@ -140,6 +140,7 @@ payment_orchestrator.payment_summary_fields = [
     'po_total_paid',
     'po_total_allocated',
     'po_total_unallocated',
+    'po_payment_status',
     'po_last_payment_intent',
     'po_payment_dashboard_html',
 ];
