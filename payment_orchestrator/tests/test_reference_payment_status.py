@@ -2,9 +2,28 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
-from payment_orchestrator.patches import add_reference_payment_status, hide_empty_payment_summary
+from payment_orchestrator.api import allocations
+from payment_orchestrator.patches import (
+    add_reference_payment_status,
+    allow_payment_summary_after_submit,
+    hide_empty_payment_summary,
+)
 from payment_orchestrator.services import derive_reference_payment_status
 from payment_orchestrator.setup.install import PAYMENT_SUMMARY_DEPENDS_ON, REFERENCE_SUMMARY_FIELDS
+
+
+class FakeReferenceDoc:
+    def __init__(self, doctype='Patient Encounter', name='HLC-ENC-TEST', **values):
+        self.doctype = doctype
+        self.name = name
+        for fieldname, value in values.items():
+            setattr(self, fieldname, value)
+
+    def get(self, fieldname, default=None):
+        return getattr(self, fieldname, default)
+
+    def set(self, fieldname, value):
+        setattr(self, fieldname, value)
 
 
 class ReferencePaymentStatusTests(TestCase):
@@ -87,6 +106,23 @@ class ReferencePaymentStatusFieldTests(TestCase):
                 self.assertEqual(status_field.get('in_standard_filter'), 0)
                 self.assertEqual(status_field.get('search_index'), 0)
 
+    def test_all_computed_summary_fields_allow_updates_after_submit(self):
+        computed_fields = {
+            'po_total_requested',
+            'po_total_paid',
+            'po_total_allocated',
+            'po_total_unallocated',
+            'po_payment_status',
+            'po_last_payment_intent',
+        }
+
+        for doctype, fields in REFERENCE_SUMMARY_FIELDS.items():
+            fields_by_name = {field['fieldname']: field for field in fields}
+            for fieldname in computed_fields:
+                with self.subTest(doctype=doctype, fieldname=fieldname):
+                    self.assertEqual(fields_by_name[fieldname].get('read_only'), 1)
+                    self.assertEqual(fields_by_name[fieldname].get('allow_on_submit'), 1)
+
     def test_payment_summary_tab_depends_on_payment_history_for_every_reference_doctype(self):
         for doctype, fields in REFERENCE_SUMMARY_FIELDS.items():
             payment_tab = next(
@@ -132,6 +168,125 @@ class EmptyPaymentSummaryPatchTests(TestCase):
             index_name='payment_intent_sales_invoice_index',
         )
         self.assertEqual(fake_frappe.db.add_index.call_count, 2)
+
+
+class PaymentSummaryAfterSubmitPatchTests(TestCase):
+    def test_patch_updates_only_computed_custom_field_metadata(self):
+        fake_frappe = MagicMock()
+        fake_frappe.db.exists.return_value = True
+
+        with patch.object(allow_payment_summary_after_submit, 'frappe', fake_frappe):
+            allow_payment_summary_after_submit.execute()
+
+        self.assertEqual(fake_frappe.db.set_value.call_count, 24)
+        for call in fake_frappe.db.set_value.call_args_list:
+            self.assertEqual(call.args[0], 'Custom Field')
+            self.assertIn(call.args[1].split('-', 1)[-1], {
+                'po_total_requested',
+                'po_total_paid',
+                'po_total_allocated',
+                'po_total_unallocated',
+                'po_payment_status',
+                'po_last_payment_intent',
+            })
+            self.assertEqual(call.args[2:], ('allow_on_submit', 1))
+            self.assertFalse(call.kwargs['update_modified'])
+        fake_frappe.db.sql.assert_not_called()
+        fake_frappe.get_all.assert_not_called()
+
+
+class ReferenceSummaryHookTests(TestCase):
+    def test_direct_sync_without_intent_skips_database_write(self):
+        with (
+            patch.object(allocations, 'is_doctype_enabled', return_value=True),
+            patch(
+                'payment_orchestrator.services.reference_has_payment_intents',
+                return_value=False,
+            ) as has_intents,
+            patch('payment_orchestrator.services.update_reference_payment_summary') as update_summary,
+        ):
+            result = allocations.sync_reference_summary('Sales Invoice', 'SINV-NO-PAYMENT')
+
+        self.assertIsNone(result)
+        has_intents.assert_called_once_with('Sales Invoice', 'SINV-NO-PAYMENT')
+        update_summary.assert_not_called()
+
+    def test_no_intent_and_no_summary_state_skips_database_write(self):
+        doc = FakeReferenceDoc(po_payment_status=None)
+
+        with (
+            patch.object(allocations, 'is_doctype_enabled', return_value=True),
+            patch(
+                'payment_orchestrator.services.reference_has_payment_intents',
+                return_value=False,
+            ) as has_intents,
+            patch('payment_orchestrator.services.update_reference_payment_summary') as update_summary,
+        ):
+            result = allocations.sync_reference_summary(doc)
+
+        self.assertIsNone(result)
+        has_intents.assert_called_once_with('Patient Encounter', 'HLC-ENC-TEST')
+        update_summary.assert_not_called()
+        self.assertIsNone(doc.po_payment_status)
+
+    def test_existing_intent_updates_database_and_returned_document(self):
+        doc = FakeReferenceDoc(po_payment_status=None)
+        summary = {
+            'po_total_requested': 100,
+            'po_total_paid': 100,
+            'po_total_allocated': 0,
+            'po_total_unallocated': 100,
+            'po_payment_status': 'Payment Received',
+            'po_last_payment_intent': 'PI-0001',
+        }
+
+        with (
+            patch.object(allocations, 'is_doctype_enabled', return_value=True),
+            patch(
+                'payment_orchestrator.services.reference_has_payment_intents',
+                return_value=True,
+            ),
+            patch(
+                'payment_orchestrator.services.update_reference_payment_summary',
+                return_value=summary,
+            ) as update_summary,
+        ):
+            result = allocations.sync_reference_summary(doc)
+
+        self.assertEqual(result, summary)
+        update_summary.assert_called_once_with('Patient Encounter', 'HLC-ENC-TEST')
+        for fieldname, value in summary.items():
+            self.assertEqual(doc.get(fieldname), value)
+
+    def test_stale_summary_is_cleared_and_mirrored_without_existence_lookup(self):
+        doc = FakeReferenceDoc(
+            po_total_requested=100,
+            po_payment_status='Awaiting Payment',
+            po_last_payment_intent='PI-DELETED',
+        )
+        cleared_summary = {
+            'po_total_requested': 0,
+            'po_total_paid': 0,
+            'po_total_allocated': 0,
+            'po_total_unallocated': 0,
+            'po_payment_status': 'Not Requested',
+            'po_last_payment_intent': None,
+        }
+
+        with (
+            patch.object(allocations, 'is_doctype_enabled', return_value=True),
+            patch('payment_orchestrator.services.reference_has_payment_intents') as has_intents,
+            patch(
+                'payment_orchestrator.services.update_reference_payment_summary',
+                return_value=cleared_summary,
+            ),
+        ):
+            allocations.sync_reference_summary(doc)
+
+        has_intents.assert_not_called()
+        self.assertEqual(doc.po_payment_status, 'Not Requested')
+        self.assertIsNone(doc.po_last_payment_intent)
+        self.assertEqual(doc.po_total_requested, 0)
 
 
 class ReferencePaymentStatusBackfillTests(TestCase):

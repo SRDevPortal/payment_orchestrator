@@ -325,6 +325,21 @@ def _payment_intent_reference_where(reference_doctype: str, reference_name: str)
     )
 
 
+def reference_has_payment_intents(reference_doctype: str, reference_name: str) -> bool:
+    where_clause, values = _payment_intent_reference_where(reference_doctype, reference_name)
+    return bool(
+        frappe.db.sql(
+            f"""
+            select name
+            from `tabPayment Intent`
+            where {where_clause}
+            limit 1
+            """,
+            values,
+        )
+    )
+
+
 def _summary_value(source, fieldname):
     if not source:
         return None

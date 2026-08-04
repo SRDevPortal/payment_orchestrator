@@ -41,51 +41,75 @@ def _payment_status_field():
         'insert_after': 'po_total_unallocated',
         'default': None,
         'read_only': 1,
+        'allow_on_submit': 1,
         'in_list_view': 1,
         'in_standard_filter': 0,
         'search_index': 0,
     }
 
 
+def _summary_currency_field(fieldname, label, insert_after):
+    return {
+        'fieldname': fieldname,
+        'label': label,
+        'fieldtype': 'Currency',
+        'insert_after': insert_after,
+        'read_only': 1,
+        'allow_on_submit': 1,
+    }
+
+
+def _latest_payment_intent_field():
+    return {
+        'fieldname': 'po_last_payment_intent',
+        'label': 'Latest Payment Intent',
+        'fieldtype': 'Link',
+        'options': 'Payment Intent',
+        'insert_after': 'po_payment_status',
+        'read_only': 1,
+        'allow_on_submit': 1,
+    }
+
+
 REFERENCE_SUMMARY_FIELDS = {
     'CRM Lead': [
         {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': 'lead_name', 'depends_on': PAYMENT_SUMMARY_DEPENDS_ON},
-        {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
-        {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
-        {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
-        {'fieldname': 'po_total_unallocated', 'label': 'Total Unallocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_allocated', 'read_only': 1},
+        _summary_currency_field('po_total_requested', 'Total Requested', 'po_payment_tab'),
+        _summary_currency_field('po_total_paid', 'Total Paid', 'po_total_requested'),
+        _summary_currency_field('po_total_allocated', 'Total Allocated', 'po_total_paid'),
+        _summary_currency_field('po_total_unallocated', 'Total Unallocated', 'po_total_allocated'),
         _payment_status_field(),
-        {'fieldname': 'po_last_payment_intent', 'label': 'Latest Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_payment_status', 'read_only': 1},
+        _latest_payment_intent_field(),
         {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
     'Patient Encounter': [
         {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': PATIENT_ENCOUNTER_PAYMENT_SUMMARY_ANCHOR, 'depends_on': PAYMENT_SUMMARY_DEPENDS_ON},
-        {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
-        {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
-        {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
-        {'fieldname': 'po_total_unallocated', 'label': 'Total Unallocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_allocated', 'read_only': 1},
+        _summary_currency_field('po_total_requested', 'Total Requested', 'po_payment_tab'),
+        _summary_currency_field('po_total_paid', 'Total Paid', 'po_total_requested'),
+        _summary_currency_field('po_total_allocated', 'Total Allocated', 'po_total_paid'),
+        _summary_currency_field('po_total_unallocated', 'Total Unallocated', 'po_total_allocated'),
         _payment_status_field(),
-        {'fieldname': 'po_last_payment_intent', 'label': 'Latest Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_payment_status', 'read_only': 1},
+        _latest_payment_intent_field(),
         {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
     'Sales Order': [
         {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': 'payment_schedule', 'depends_on': PAYMENT_SUMMARY_DEPENDS_ON},
-        {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
-        {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
-        {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
-        {'fieldname': 'po_total_unallocated', 'label': 'Total Unallocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_allocated', 'read_only': 1},
+        _summary_currency_field('po_total_requested', 'Total Requested', 'po_payment_tab'),
+        _summary_currency_field('po_total_paid', 'Total Paid', 'po_total_requested'),
+        _summary_currency_field('po_total_allocated', 'Total Allocated', 'po_total_paid'),
+        _summary_currency_field('po_total_unallocated', 'Total Unallocated', 'po_total_allocated'),
         _payment_status_field(),
-        {'fieldname': 'po_last_payment_intent', 'label': 'Latest Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_payment_status', 'read_only': 1},
+        _latest_payment_intent_field(),
         {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
     'Sales Invoice': [
         {'fieldname': 'po_payment_tab', 'label': 'Payment Summary', 'fieldtype': 'Tab Break', 'insert_after': SALES_INVOICE_PAYMENT_SUMMARY_ANCHOR, 'depends_on': PAYMENT_SUMMARY_DEPENDS_ON},
-        {'fieldname': 'po_total_requested', 'label': 'Total Requested', 'fieldtype': 'Currency', 'insert_after': 'po_payment_tab', 'read_only': 1},
-        {'fieldname': 'po_total_paid', 'label': 'Total Paid', 'fieldtype': 'Currency', 'insert_after': 'po_total_requested', 'read_only': 1},
-        {'fieldname': 'po_total_allocated', 'label': 'Total Allocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_paid', 'read_only': 1},
-        {'fieldname': 'po_total_unallocated', 'label': 'Total Unallocated', 'fieldtype': 'Currency', 'insert_after': 'po_total_allocated', 'read_only': 1},
+        _summary_currency_field('po_total_requested', 'Total Requested', 'po_payment_tab'),
+        _summary_currency_field('po_total_paid', 'Total Paid', 'po_total_requested'),
+        _summary_currency_field('po_total_allocated', 'Total Allocated', 'po_total_paid'),
+        _summary_currency_field('po_total_unallocated', 'Total Unallocated', 'po_total_allocated'),
         _payment_status_field(),
-        {'fieldname': 'po_last_payment_intent', 'label': 'Latest Payment Intent', 'fieldtype': 'Link', 'options': 'Payment Intent', 'insert_after': 'po_payment_status', 'read_only': 1},
+        _latest_payment_intent_field(),
         {'fieldname': 'po_payment_dashboard_html', 'label': 'Payment Dashboard', 'fieldtype': 'HTML', 'insert_after': 'po_last_payment_intent'},
     ],
 }
