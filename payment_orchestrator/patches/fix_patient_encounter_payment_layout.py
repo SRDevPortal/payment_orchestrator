@@ -12,4 +12,3 @@ def execute():
     create_custom_fields(_reference_summary_fields_for_install(), update=True)
     sync_reference_field_placement()
     sync_reference_field_visibility()
-    frappe.db.commit()

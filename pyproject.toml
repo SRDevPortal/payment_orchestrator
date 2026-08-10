@@ -2,9 +2,21 @@
 name = "payment_orchestrator"
 version = "0.0.1"
 description = "Multi-gateway payment links, POS collections, webhooks, and ERPNext allocation for Frappe"
-requires-python = ">=3.10"
+requires-python = ">=3.14,<3.15"
 authors = [{ name = "OpenClaw" }]
 license = { file = "LICENSE" }
+dependencies = [
+    "requests>=2.31,<3",
+]
+
+[tool.bench.frappe-dependencies]
+frappe = ">=16.0.0,<17.0.0"
+erpnext = ">=16.0.0,<17.0.0"
+healthcare = ">=16.0.0,<17.0.0"
+crm = ">=1.81.0,<2.0.0"
+
+[tool.ruff]
+target-version = "py314"
 
 [tool.setuptools]
 include-package-data = true

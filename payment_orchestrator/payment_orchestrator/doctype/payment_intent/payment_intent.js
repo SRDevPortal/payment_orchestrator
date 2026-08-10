@@ -349,7 +349,7 @@ function metric(label, value) {
 
 function link_item(label, doctype, name) {
     if (!doctype || !name) return '';
-    const href = `/app/${frappe.router.slug(doctype)}/${encodeURIComponent(name)}`;
+		const href = `/desk/${frappe.router.slug(doctype)}/${encodeURIComponent(name)}`;
     return `<div class="po-intent-link"><span>${escape_html(label)}</span><a href="${href}"><b>${escape_html(name)}</b></a></div>`;
 }
 

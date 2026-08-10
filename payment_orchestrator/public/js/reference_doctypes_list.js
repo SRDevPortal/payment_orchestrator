@@ -26,7 +26,7 @@
             return `<span title="${title}">${badge}</span>`;
         }
 
-        const href = `/app/payment-intent/${encodeURIComponent(paymentIntent)}`;
+		const href = `/desk/payment-intent/${encodeURIComponent(paymentIntent)}`;
         return `<a class="po-list-status-link" href="${href}" title="${title}">${badge}</a>`;
     }
 
