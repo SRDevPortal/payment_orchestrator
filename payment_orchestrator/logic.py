@@ -563,8 +563,8 @@ def _resolve_customer(intent, context):
         customer = frappe.get_doc({
             'doctype': 'Customer',
             'customer_name': patient_name or patient or intent.reference_name,
-            'customer_group': frappe.db.get_value('Customer Group', {}, 'name') or 'All Customer Groups',
-            'territory': frappe.db.get_value('Territory', {}, 'name') or 'All Territories',
+			'customer_group': 'All Customer Groups',
+			'territory': 'All Territories',
         })
         customer.insert(ignore_permissions=True)
         return customer.name
@@ -576,8 +576,8 @@ def _resolve_customer(intent, context):
         customer = frappe.get_doc({
             'doctype': 'Customer',
             'customer_name': lead_name,
-            'customer_group': frappe.db.get_value('Customer Group', {}, 'name') or 'All Customer Groups',
-            'territory': frappe.db.get_value('Territory', {}, 'name') or 'All Territories',
+			'customer_group': 'All Customer Groups',
+			'territory': 'All Territories',
         })
         customer.insert(ignore_permissions=True)
         return customer.name

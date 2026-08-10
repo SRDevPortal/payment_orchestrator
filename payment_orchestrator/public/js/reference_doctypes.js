@@ -297,7 +297,7 @@ payment_orchestrator.render_dashboard_intent = function(row) {
     const currency = row.currency;
     const lifecycle = payment_orchestrator.dashboard_intent_lifecycle_label(row);
     const guidance = payment_orchestrator.dashboard_intent_guidance(row);
-    const intent_url = `/app/payment-intent/${encodeURIComponent(row.name || '')}`;
+			const intent_url = `/desk/payment-intent/${encodeURIComponent(row.name || '')}`;
     const refunded = parseFloat(row.amount_refunded || 0);
     return `
         <div style="padding:8px 0;border-bottom:1px solid #eee;">

@@ -3,6 +3,8 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
+from frappe.exceptions import UniqueValidationError
+
 from payment_orchestrator.provider.pinelabs.payment_link import PineLabsPaymentLinkAdapter
 from payment_orchestrator.provider.pinelabs.online import format_online_api_error
 from payment_orchestrator.provider.razorpay.client import RazorpayClient
@@ -23,7 +25,11 @@ from payment_orchestrator.logic import (
     process_provider_payment_success,
     update_encounter_status_after_payment,
 )
-from payment_orchestrator.api.webhooks import _mark_refunded, razorpay as razorpay_webhook
+from payment_orchestrator.api.webhooks import (
+    _insert_provider_event,
+    _mark_refunded,
+    razorpay as razorpay_webhook,
+)
 from payment_orchestrator.api.whatsapp import ensure_whatsapp_supported_payment_intent
 from payment_orchestrator.notifications.whatsapp import (
     build_payment_template_payload,
@@ -419,6 +425,32 @@ class RefundWebhookTests(TestCase):
 
 
 class WebhookIngressTests(TestCase):
+    def test_duplicate_event_insert_returns_existing_audit_event(self):
+        new_event = SimpleNamespace(
+            insert=lambda **kwargs: (_ for _ in ()).throw(UniqueValidationError("duplicate guard")),
+        )
+        existing_event = SimpleNamespace(name="EVT-EXISTING")
+
+        def get_doc(*args, **kwargs):
+            if len(args) == 1 and isinstance(args[0], dict):
+                return new_event
+            return existing_event
+
+        fake_frappe = SimpleNamespace(
+            DuplicateEntryError=type("DuplicateEntryError", (Exception,), {}),
+            UniqueValidationError=UniqueValidationError,
+            get_doc=get_doc,
+            db=SimpleNamespace(get_value=lambda *args, **kwargs: "EVT-EXISTING"),
+        )
+
+        with patch("payment_orchestrator.api.webhooks.frappe", fake_frappe):
+            event, is_duplicate = _insert_provider_event(
+                {"doctype": "Payment Provider Event", "duplicate_guard_key": "guard-key"}
+            )
+
+        self.assertIs(event, existing_event)
+        self.assertTrue(is_duplicate)
+
     def test_invalid_razorpay_signature_is_rejected_before_event_insert(self):
         settings = SimpleNamespace(get_password=lambda fieldname: "webhook-secret")
         fake_frappe = SimpleNamespace(

@@ -26,7 +26,7 @@
     {"fieldname": "event_id", "fieldtype": "Data", "label": "Event ID", "in_list_view": 1},
     {"fieldname": "verification_status", "fieldtype": "Select", "label": "Verification Status", "options": "Pending\nVerified\nRejected", "default": "Pending"},
     {"fieldname": "processing_status", "fieldtype": "Select", "label": "Processing Status", "options": "Pending\nProcessed\nFailed\nIgnored\nDuplicate", "default": "Pending"},
-    {"fieldname": "duplicate_guard_key", "fieldtype": "Data", "label": "Duplicate Guard Key"},
+    {"fieldname": "duplicate_guard_key", "fieldtype": "Data", "label": "Duplicate Guard Key", "unique": 1},
     {"fieldname": "payment_intent", "fieldtype": "Link", "label": "Payment Intent", "options": "Payment Intent"},
     {"fieldname": "payment_entry", "fieldtype": "Link", "label": "Payment Entry", "options": "Payment Entry"},
     {"fieldname": "received_on", "fieldtype": "Datetime", "label": "Received On"},

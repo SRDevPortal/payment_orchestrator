@@ -139,11 +139,18 @@ def _reference_summary_fields_for_install():
 
 
 def after_install():
+    setup_all()
+
+
+def after_migrate():
+    setup_all()
+
+
+def setup_all():
     create_custom_fields(_reference_summary_fields_for_install(), update=True)
     sync_reference_field_placement()
     sync_reference_field_visibility()
     ensure_default_modes_of_payment()
-    frappe.db.commit()
 
 
 def sync_reference_field_placement():

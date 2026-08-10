@@ -32,5 +32,3 @@ def execute():
                 ['sales_invoice'],
                 index_name='payment_intent_sales_invoice_index',
             )
-
-    frappe.db.commit()

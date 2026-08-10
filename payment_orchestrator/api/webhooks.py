@@ -50,25 +50,19 @@ def razorpay():
 
     guard_key = hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
-    event = frappe.get_doc({
+    duplicate_guard_enabled = bool(settings.enable_duplicate_webhook_guard)
+    event, is_duplicate = _insert_provider_event({
         'doctype': 'Payment Provider Event',
         'provider': 'Razorpay',
         'received_on': now_ts(),
         'payload': payload if settings.store_full_webhook_payload else '{}',
         'verification_status': 'Verified',
         'processing_status': 'Pending',
-        'duplicate_guard_key': guard_key,
+        'duplicate_guard_key': guard_key if duplicate_guard_enabled else None,
     })
-    event.insert(ignore_permissions=True)
+    if is_duplicate:
+        return {'ok': True, 'duplicate': True, 'event': event.name}
     frappe.db.commit()
-
-    if settings.enable_duplicate_webhook_guard and frappe.db.exists('Payment Provider Event', {
-        'duplicate_guard_key': guard_key,
-        'name': ['!=', event.name],
-        'processing_status': ['in', ['Processed', 'Duplicate']],
-    }):
-        event.db_set('processing_status', 'Duplicate')
-        return {'ok': True, 'duplicate': True}
 
     event.db_set('event_type', data.get('event'))
     event.db_set('event_id', _resolve_event_id(data))
@@ -125,18 +119,21 @@ def pinelabs():
     guard_key = hashlib.sha256((payload or json.dumps(data, sort_keys=True)).encode('utf-8')).hexdigest()
     event_type = data.get('event') or ('pinelabs.payment_link.callback' if _is_pinelabs_payment_link_payload(data) else 'pinelabs.postback')
 
-    event = frappe.get_doc({
+    duplicate_guard_enabled = bool(get_flag(settings, 'enable_duplicate_webhook_guard'))
+    event, is_duplicate = _insert_provider_event({
         'doctype': 'Payment Provider Event',
         'provider': 'Pine Labs',
         'received_on': now_ts(),
         'payload': (payload or json.dumps(data, default=str)) if get_flag(settings, 'store_full_webhook_payload') else '{}',
         'verification_status': 'Pending',
         'processing_status': 'Pending',
-        'duplicate_guard_key': guard_key,
+        'duplicate_guard_key': guard_key if duplicate_guard_enabled else None,
         'event_type': event_type,
         'event_id': _pinelabs_event_id(data),
     })
-    event.insert(ignore_permissions=True)
+    if is_duplicate:
+        result = {'ok': True, 'duplicate': True, 'event': event.name}
+        return _pinelabs_browser_callback_response(result, data, is_browser_callback)
 
     if _is_pinelabs_payment_link_payload(data):
         result = _process_pinelabs_payment_link_event(data, event)
@@ -188,6 +185,23 @@ def _parse_pinelabs_payload(payload):
     if form:
         return dict(form)
     return dict(parse_qsl((payload or '').replace('\n', '&').replace('\r', '&')))
+
+
+def _insert_provider_event(values):
+    event = frappe.get_doc(values)
+    try:
+        event.insert(ignore_permissions=True)
+        return event, False
+    except (frappe.DuplicateEntryError, frappe.UniqueValidationError):
+        guard_key = values.get('duplicate_guard_key')
+        existing_name = guard_key and frappe.db.get_value(
+            'Payment Provider Event',
+            {'duplicate_guard_key': guard_key},
+            'name',
+        )
+        if not existing_name:
+            raise
+        return frappe.get_doc('Payment Provider Event', existing_name), True
 
 
 def _validate_payload_size(payload):

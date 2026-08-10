@@ -22,5 +22,3 @@ def execute():
                 )
 
         frappe.clear_cache(doctype=doctype)
-
-    frappe.db.commit()
