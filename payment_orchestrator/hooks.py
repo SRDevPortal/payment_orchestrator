@@ -5,6 +5,8 @@ app_description = "Multi-gateway payment links, POS collections, webhooks, and E
 app_email = "support@example.com"
 app_license = "MIT"
 
+required_apps = ["erpnext", "healthcare", "crm"]
+
 app_include_css = "/assets/payment_orchestrator/css/payment_orchestrator.css"
 
 fixtures = []
