@@ -1,11 +1,11 @@
 import frappe
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 
 from payment_orchestrator.api.webhooks import _insert_provider_event
 from payment_orchestrator.setup.install import setup_all
 
 
-class PaymentOrchestratorFrappe16MigrationTests(FrappeTestCase):
+class PaymentOrchestratorFrappe16MigrationTests(IntegrationTestCase):
     def test_duplicate_guard_key_is_unique(self):
         field = frappe.get_meta("Payment Provider Event").get_field("duplicate_guard_key")
         self.assertEqual(field.unique, 1)
